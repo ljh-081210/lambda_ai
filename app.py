@@ -56,31 +56,41 @@ def preprocess_for_inference(img: Image.Image) -> np.ndarray:
 
 def load_image_from_event(event: dict) -> Image.Image:
     """
-    API Gateway 바이너리 / JSON base64 두 가지 방식 모두 지원
-    - API Gateway binary: isBase64Encoded=True, body에 base64 인코딩된 이미지
-    - JSON 방식: body = {"image": "<base64>"}
+    아래 순서로 이미지 파싱 시도:
+    1. API Gateway binary (isBase64Encoded=True)
+    2. JSON body {"image": "<base64>"}
+    3. body 자체가 base64 문자열인 경우
     """
-    body = event.get('body', '')
+    import logging
+    logging.info(f"[DEBUG] isBase64Encoded={event.get('isBase64Encoded')}, "
+                 f"headers={event.get('headers')}")
+
+    body = event.get('body') or ''
     is_base64 = event.get('isBase64Encoded', False)
-    content_type = ''
-    headers = event.get('headers') or {}
-    for k, v in headers.items():
-        if k.lower() == 'content-type':
-            content_type = v.lower()
-            break
 
-    # API Gateway 바이너리 이미지 (image/jpeg, image/png 등)
-    if is_base64 and 'image' in content_type:
-        image_bytes = base64.b64decode(body)
-        return Image.open(io.BytesIO(image_bytes))
+    # 1. API Gateway 바이너리 (isBase64Encoded=True)
+    if is_base64 and body:
+        try:
+            image_bytes = base64.b64decode(body)
+            return Image.open(io.BytesIO(image_bytes))
+        except Exception:
+            pass
 
-    # JSON body {"image": "<base64>"}
+    # 2. JSON {"image": "<base64>"}
     try:
         json_body = json.loads(body)
         image_bytes = base64.b64decode(json_body['image'])
         return Image.open(io.BytesIO(image_bytes))
     except Exception:
         pass
+
+    # 3. body 자체가 base64인 경우 (fallback)
+    if body:
+        try:
+            image_bytes = base64.b64decode(body)
+            return Image.open(io.BytesIO(image_bytes))
+        except Exception:
+            pass
 
     raise ValueError("지원하지 않는 요청 형식입니다. image/jpeg 또는 JSON {image: base64} 형식을 사용하세요.")
 

@@ -45,10 +45,10 @@ def compute_canonical_hash(img: Image.Image) -> str:
     같은 이미지를 어떤 각도로 돌려도 동일한 해시가 나옴.
     """
     hashes = [
-        imagehash.phash(img.rotate(angle))
+        str(imagehash.phash(img.rotate(angle)))
         for angle in [0, 90, 180, 270]
     ]
-    return str(min(hashes))
+    return min(hashes)
 
 
 def preprocess_for_inference(img: Image.Image) -> np.ndarray:

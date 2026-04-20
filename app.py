@@ -96,20 +96,6 @@ def load_image_from_event(event: dict) -> Image.Image:
 
 
 def lambda_handler(event, context):
-    # 디버그: event 구조 확인 (문제 파악 후 제거)
-    body = event.get('body') or ''
-    return {
-        'statusCode': 200,
-        'body': json.dumps({
-            'debug': True,
-            'isBase64Encoded': event.get('isBase64Encoded'),
-            'headers': event.get('headers'),
-            'body_type': type(body).__name__,
-            'body_length': len(body),
-            'body_preview': body[:100] if isinstance(body, str) else repr(body[:50]),
-        })
-    }
-
     execution_start = time.perf_counter()
 
     try:

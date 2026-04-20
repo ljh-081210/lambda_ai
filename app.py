@@ -22,7 +22,6 @@ cold_start_time = cold_start_end - cold_start_begin
 
 
 def fix_exif_rotation(img: Image.Image) -> Image.Image:
-    """EXIF 회전 정보가 있으면 보정"""
     try:
         exif = img._getexif()
         if exif is None:
@@ -40,10 +39,7 @@ def fix_exif_rotation(img: Image.Image) -> Image.Image:
 
 
 def compute_canonical_hash(img: Image.Image) -> str:
-    """
-    0°, 90°, 180°, 270° 회전 중 가장 작은 pHash를 정규 해시로 사용.
-    같은 이미지를 어떤 각도로 돌려도 동일한 해시가 나옴.
-    """
+    """0°/90°/180°/270° 중 가장 작은 pHash → 회전해도 동일한 해시 반환"""
     hashes = [
         str(imagehash.phash(img.rotate(angle)))
         for angle in [0, 90, 180, 270]
@@ -58,31 +54,53 @@ def preprocess_for_inference(img: Image.Image) -> np.ndarray:
     return preprocess_input(arr)
 
 
+def load_image_from_event(event: dict) -> Image.Image:
+    """
+    API Gateway 바이너리 / JSON base64 두 가지 방식 모두 지원
+    - API Gateway binary: isBase64Encoded=True, body에 base64 인코딩된 이미지
+    - JSON 방식: body = {"image": "<base64>"}
+    """
+    body = event.get('body', '')
+    is_base64 = event.get('isBase64Encoded', False)
+    content_type = ''
+    headers = event.get('headers') or {}
+    for k, v in headers.items():
+        if k.lower() == 'content-type':
+            content_type = v.lower()
+            break
+
+    # API Gateway 바이너리 이미지 (image/jpeg, image/png 등)
+    if is_base64 and 'image' in content_type:
+        image_bytes = base64.b64decode(body)
+        return Image.open(io.BytesIO(image_bytes))
+
+    # JSON body {"image": "<base64>"}
+    try:
+        json_body = json.loads(body)
+        image_bytes = base64.b64decode(json_body['image'])
+        return Image.open(io.BytesIO(image_bytes))
+    except Exception:
+        pass
+
+    raise ValueError("지원하지 않는 요청 형식입니다. image/jpeg 또는 JSON {image: base64} 형식을 사용하세요.")
+
+
 def lambda_handler(event, context):
     execution_start = time.perf_counter()
 
     try:
-        body = json.loads(event.get('body', '{}'))
-    except (json.JSONDecodeError, TypeError) as e:
-        return {'statusCode': 400, 'body': json.dumps({'error': f'Invalid JSON: {e}'})}
-
-    if 'image' not in body:
-        return {'statusCode': 400, 'body': json.dumps({'error': "'image' field (base64) is required"})}
-
-    try:
-        image_bytes = base64.b64decode(body['image'])
-        img = Image.open(io.BytesIO(image_bytes))
+        img = load_image_from_event(event)
+    except ValueError as e:
+        return {'statusCode': 400, 'body': json.dumps({'error': str(e)})}
     except Exception as e:
         return {'statusCode': 400, 'body': json.dumps({'error': f'Image load failed: {e}'})}
 
-    # EXIF 보정 후 정규 해시 계산
     try:
         img = fix_exif_rotation(img)
         image_hash = compute_canonical_hash(img)
     except Exception as e:
         return {'statusCode': 500, 'body': json.dumps({'error': f'Hash computation failed: {e}'})}
 
-    # MobileNetV2 추론
     try:
         data = preprocess_for_inference(img)
         inference_start = time.perf_counter()
@@ -102,7 +120,7 @@ def lambda_handler(event, context):
     return {
         'statusCode': 200,
         'body': json.dumps({
-            'image_hash': image_hash,        # CloudFront 캐시 키로 사용될 값
+            'image_hash': image_hash,
             'predictions': results,
             'cold_start_time_s': round(cold_start_time, 4),
             'inference_time_s': round(inference_end - inference_start, 4),

@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pem
+*.jpg
+*.jpeg
+*.png
+.env

@@ -1,5 +1,8 @@
 FROM public.ecr.aws/lambda/python:3.10
 
+# h5py 빌드에 필요한 시스템 패키지 설치
+RUN yum install -y gcc python3-devel hdf5-devel pkg-config && yum clean all
+
 COPY requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt --target "${LAMBDA_TASK_ROOT}"
 

@@ -20,15 +20,26 @@ model = MobileNetV2(weights='imagenet')
 cold_start_end = time.perf_counter()
 cold_start_time = cold_start_end - cold_start_begin
 
+# ImageNet에서 고양이로 분류되는 label 목록
+CAT_LABELS = {
+    'tabby', 'tiger_cat', 'persian_cat', 'siamese_cat',
+    'egyptian_cat', 'cougar', 'lynx', 'leopard', 'snow_leopard',
+    'jaguar', 'lion', 'tiger', 'cheetah'
+}
+
+# 1단계: pHash 캐시 (시각적으로 동일한 이미지)
+phash_cache = {}
+
+# 2단계: label 캐시 (고양이면 무조건 HIT)
+label_cache = {}
+
 
 def fix_exif_rotation(img: Image.Image) -> Image.Image:
     try:
         exif = img._getexif()
         if exif is None:
             return img
-        orientation_key = next(
-            k for k, v in ExifTags.TAGS.items() if v == 'Orientation'
-        )
+        orientation_key = next(k for k, v in ExifTags.TAGS.items() if v == 'Orientation')
         orientation = exif.get(orientation_key)
         rotations = {3: 180, 6: 270, 8: 90}
         if orientation in rotations:
@@ -39,11 +50,7 @@ def fix_exif_rotation(img: Image.Image) -> Image.Image:
 
 
 def compute_canonical_hash(img: Image.Image) -> str:
-    """0°/90°/180°/270° 중 가장 작은 pHash → 회전해도 동일한 해시 반환"""
-    hashes = [
-        str(imagehash.phash(img.rotate(angle)))
-        for angle in [0, 90, 180, 270]
-    ]
+    hashes = [str(imagehash.phash(img.rotate(angle))) for angle in [0, 90, 180, 270]]
     return min(hashes)
 
 
@@ -55,44 +62,32 @@ def preprocess_for_inference(img: Image.Image) -> np.ndarray:
 
 
 def load_image_from_event(event: dict) -> Image.Image:
-    """
-    아래 순서로 이미지 파싱 시도:
-    1. API Gateway binary (isBase64Encoded=True)
-    2. JSON body {"image": "<base64>"}
-    3. body 자체가 base64 문자열인 경우
-    """
-    import logging
-    logging.info(f"[DEBUG] isBase64Encoded={event.get('isBase64Encoded')}, "
-                 f"headers={event.get('headers')}")
-
     body = event.get('body') or ''
     is_base64 = event.get('isBase64Encoded', False)
 
-    # 1. API Gateway 바이너리 (isBase64Encoded=True)
     if is_base64 and body:
         try:
-            image_bytes = base64.b64decode(body)
-            return Image.open(io.BytesIO(image_bytes))
+            return Image.open(io.BytesIO(base64.b64decode(body)))
         except Exception:
             pass
 
-    # 2. JSON {"image": "<base64>"}
     try:
         json_body = json.loads(body)
-        image_bytes = base64.b64decode(json_body['image'])
-        return Image.open(io.BytesIO(image_bytes))
+        return Image.open(io.BytesIO(base64.b64decode(json_body['image'])))
     except Exception:
         pass
 
-    # 3. body 자체가 base64인 경우 (fallback)
     if body:
         try:
-            image_bytes = base64.b64decode(body)
-            return Image.open(io.BytesIO(image_bytes))
+            return Image.open(io.BytesIO(base64.b64decode(body)))
         except Exception:
             pass
 
-    raise ValueError("지원하지 않는 요청 형식입니다. image/jpeg 또는 JSON {image: base64} 형식을 사용하세요.")
+    raise ValueError("지원하지 않는 요청 형식입니다. image/jpeg 형식을 사용하세요.")
+
+
+def build_response(status_code: int, body: dict) -> dict:
+    return {'statusCode': status_code, 'body': json.dumps(body, ensure_ascii=False)}
 
 
 def lambda_handler(event, context):
@@ -101,40 +96,67 @@ def lambda_handler(event, context):
     try:
         img = load_image_from_event(event)
     except ValueError as e:
-        return {'statusCode': 400, 'body': json.dumps({'error': str(e)})}
+        return build_response(400, {'error': str(e)})
     except Exception as e:
-        return {'statusCode': 400, 'body': json.dumps({'error': f'Image load failed: {e}'})}
+        return build_response(400, {'error': f'Image load failed: {e}'})
 
     try:
         img = fix_exif_rotation(img)
         image_hash = compute_canonical_hash(img)
     except Exception as e:
-        return {'statusCode': 500, 'body': json.dumps({'error': f'Hash computation failed: {e}'})}
+        return build_response(500, {'error': f'Hash computation failed: {e}'})
 
+    # 1단계: pHash 캐시 확인 (AI 실행 없이 즉시 반환)
+    if image_hash in phash_cache:
+        cached_label = phash_cache[image_hash]
+        return build_response(200, {
+            **label_cache[cached_label],
+            'cache': 'hit',
+            'cache_level': 'pHash',
+            'execution_time_s': round(time.perf_counter() - execution_start, 4),
+        })
+
+    # 2단계: MobileNetV2 추론
     try:
         data = preprocess_for_inference(img)
         inference_start = time.perf_counter()
         preds = model.predict(data, verbose=0)
         inference_end = time.perf_counter()
     except Exception as e:
-        return {'statusCode': 500, 'body': json.dumps({'error': f'Inference failed: {e}'})}
+        return build_response(500, {'error': f'Inference failed: {e}'})
 
     top5 = decode_predictions(preds, top=5)[0]
-    results = [
-        {'rank': i + 1, 'class_id': cls_id, 'label': label, 'score': round(float(score), 6)}
-        for i, (cls_id, label, score) in enumerate(top5)
+    top_label = top5[0][1]
+    label = 'cat' if top_label in CAT_LABELS else 'not_cat'
+
+    predictions = [
+        {'rank': i + 1, 'class_id': cls_id, 'label': lbl, 'score': round(float(score), 6)}
+        for i, (cls_id, lbl, score) in enumerate(top5)
     ]
 
-    execution_end = time.perf_counter()
-
-    return {
-        'statusCode': 200,
-        'body': json.dumps({
-            'image_hash': image_hash,
-            'predictions': results,
-            'cold_start_time_s': round(cold_start_time, 4),
-            'inference_time_s': round(inference_end - inference_start, 4),
-            'execution_time_s': round(execution_end - execution_start, 4),
-            'num_cores': multiprocessing.cpu_count(),
-        })
+    result = {
+        'label': label,
+        'predictions': predictions,
+        'cold_start_time_s': round(cold_start_time, 4),
+        'inference_time_s': round(inference_end - inference_start, 4),
     }
+
+    # pHash → label 매핑 저장
+    phash_cache[image_hash] = label
+
+    # label 캐시 확인 (다른 고양이 사진 HIT)
+    if label in label_cache:
+        return build_response(200, {
+            **label_cache[label],
+            'cache': 'hit',
+            'cache_level': 'label',
+            'execution_time_s': round(time.perf_counter() - execution_start, 4),
+        })
+
+    # 완전 MISS → 결과 저장 후 반환
+    label_cache[label] = result
+    return build_response(200, {
+        **result,
+        'cache': 'miss',
+        'execution_time_s': round(time.perf_counter() - execution_start, 4),
+    })

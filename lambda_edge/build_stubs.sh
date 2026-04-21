@@ -91,6 +91,7 @@ int xcb_get_image_data_length(xcb_get_image_reply_t* r) { return 0; }
 xcb_get_image_reply_t* xcb_get_image_reply(void* c, void* cookie, void** e) { return NULL; }
 const void* xcb_get_setup(xcb_connection_t* c) { return NULL; }
 void xcb_screen_next(xcb_screen_iterator_t* i) {}
+xcb_screen_iterator_t xcb_setup_roots_iterator(const void* s) { xcb_screen_iterator_t i = {NULL}; return i; }
 EOF
 
 gcc -shared -fPIC -O2 \

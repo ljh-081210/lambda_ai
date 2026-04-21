@@ -4,6 +4,7 @@ set -e
 echo "=== Lambda@Edge 패키지 크기 확인 ==="
 
 rm -rf package edge_function.zip
+mkdir -p package
 
 echo "--- 1. Pillow 최소 설치 ---"
 pip3 install Pillow --target ./package --quiet --no-deps
@@ -14,25 +15,34 @@ find ./package -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find ./package -name "tests" -exec rm -rf {} + 2>/dev/null || true
 find ./package -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
 
-# JPEG 외 PIL 플러그인 제거
+# _imaging.cpython 하나만 남기고 나머지 .so 전부 제거
 cd package/PIL
+ls *.so 2>/dev/null | grep -v "^_imaging\.cpython" | xargs rm -f 2>/dev/null || true
+
+# JPEG 외 PIL 플러그인 제거
 ls *.py | grep -v -E "^(Image|ImageFile|ImageOps|ImageFilter|JpegImagePlugin|ExifTags|TiffImagePlugin|MpoImagePlugin|_binary|_deprecate|_util|__init__)\.py$" | xargs rm -f 2>/dev/null || true
-# JPEG 관련 .so 파일만 남기고 제거
-ls *.so 2>/dev/null | grep -v "_imaging" | xargs rm -f 2>/dev/null || true
 cd ../..
 
-echo "--- 3. .so 파일 디버그 심볼 제거 (strip) ---"
+echo "--- 3. strip으로 디버그 심볼 제거 ---"
 find ./package -name "*.so" | while read f; do
     BEFORE=$(wc -c < "$f")
-    strip --strip-debug "$f" 2>/dev/null || true
+    strip --strip-all "$f" 2>/dev/null || true
     AFTER=$(wc -c < "$f")
-    echo "  $f: ${BEFORE} → ${AFTER} bytes"
+    echo "  strip: $f: ${BEFORE} → ${AFTER} bytes"
 done
 
-echo "--- 4. 함수 코드 복사 ---"
+echo "--- 4. UPX로 추가 압축 ---"
+find ./package -name "*.so" | while read f; do
+    BEFORE=$(wc -c < "$f")
+    upx --best "$f" 2>/dev/null || true
+    AFTER=$(wc -c < "$f")
+    echo "  upx: $f: ${BEFORE} → ${AFTER} bytes"
+done
+
+echo "--- 5. 함수 코드 복사 ---"
 cp lambda_function.py ./package/
 
-echo "--- 5. ZIP 생성 ---"
+echo "--- 6. ZIP 생성 ---"
 cd package && zip -r ../edge_function.zip . -x "*.pyc" > /dev/null && cd ..
 
 echo ""

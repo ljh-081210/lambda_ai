@@ -1,0 +1,43 @@
+#!/bin/bash
+set -e
+
+echo "=== Lambda@Edge 패키지 크기 확인 ==="
+
+rm -rf package edge_function.zip
+
+echo "--- 1. Pillow 최소 설치 ---"
+pip3 install Pillow --target ./package --quiet --no-deps
+
+echo "--- 2. 불필요한 파일 제거 ---"
+# 테스트 파일 제거
+find ./package -name "*.pyc" -delete
+find ./package -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find ./package -name "tests" -exec rm -rf {} + 2>/dev/null || true
+find ./package -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
+
+# JPEG 외 PIL 플러그인 제거 (불필요한 포맷)
+cd package/PIL
+ls *.py | grep -v -E "^(Image|ImageFile|ImageOps|ImageFilter|JpegImagePlugin|ExifTags|TiffImagePlugin|MpoImagePlugin|_binary|_deprecate|_util|__init__)\.py$" | xargs rm -f 2>/dev/null || true
+cd ../..
+
+echo "--- 3. 함수 코드 복사 ---"
+cp lambda_function.py ./package/
+
+echo "--- 4. ZIP 생성 ---"
+cd package && zip -r ../edge_function.zip . -x "*.pyc" > /dev/null && cd ..
+
+echo ""
+echo "=== 결과 ==="
+UNZIPPED=$(du -sh package | cut -f1)
+ZIPPED=$(du -sh edge_function.zip | cut -f1)
+ZIPPED_BYTES=$(wc -c < edge_function.zip)
+
+echo "압축 전: ${UNZIPPED}"
+echo "압축 후: ${ZIPPED} (${ZIPPED_BYTES} bytes)"
+echo ""
+
+if [ ${ZIPPED_BYTES} -lt 1048576 ]; then
+    echo "✅ 1MB 이내 → Lambda@Edge Viewer Request 배포 가능!"
+else
+    echo "❌ 1MB 초과 ($(echo "scale=2; ${ZIPPED_BYTES}/1048576" | bc)MB) → 불가"
+fi

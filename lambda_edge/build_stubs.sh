@@ -99,8 +99,47 @@ strip --strip-all libxcb-64009ff3.so.1.1.0
 echo "libxcb stub: $(wc -c < libxcb-64009ff3.so.6.1.0) bytes" 2>/dev/null || \
 echo "libxcb stub: $(wc -c < libxcb-64009ff3.so.1.1.0) bytes"
 
-# ── libopenjp2 stub (빈 라이브러리) ──────────────────────
-echo "" > libopenjp2_stub.c
+# ── libopenjp2 stub ───────────────────────────────────────
+cat > libopenjp2_stub.c << 'EOF'
+#include <stdlib.h>
+
+typedef void opj_codec_t;
+typedef void opj_image_t;
+typedef void opj_stream_t;
+typedef struct { int x0,y0,x1,y1; int numresolutions; } opj_dparameters_t;
+typedef struct { int numresolution; } opj_cparameters_t;
+
+opj_codec_t* opj_create_compress(int fmt) { return NULL; }
+opj_codec_t* opj_create_decompress(int fmt) { return NULL; }
+int  opj_decode_tile_data(opj_codec_t* c, unsigned int idx, unsigned char* d, unsigned long long len, opj_stream_t* s) { return 0; }
+void opj_destroy_codec(opj_codec_t* c) {}
+int  opj_encoder_set_extra_options(opj_codec_t* c, const char** opts) { return 1; }
+int  opj_end_compress(opj_codec_t* c, opj_stream_t* s) { return 0; }
+int  opj_end_decompress(opj_codec_t* c, opj_stream_t* s) { return 0; }
+opj_image_t* opj_image_create(unsigned int n, void* cmptparms, int clrspc) { return NULL; }
+void opj_image_destroy(opj_image_t* img) {}
+int  opj_read_header(opj_stream_t* s, opj_codec_t* c, opj_image_t** img) { return 0; }
+int  opj_read_tile_header(opj_codec_t* c, unsigned int* tidx, unsigned long long* dlen, int* tx0, int* ty0, int* tx1, int* ty1, unsigned int* ncomps, int* go_on, opj_stream_t* s) { return 0; }
+void opj_set_default_decoder_parameters(opj_dparameters_t* p) {}
+void opj_set_default_encoder_parameters(opj_cparameters_t* p) {}
+int  opj_set_error_handler(opj_codec_t* c, void* h, void* d) { return 1; }
+int  opj_set_info_handler(opj_codec_t* c, void* h, void* d) { return 1; }
+int  opj_set_warning_handler(opj_codec_t* c, void* h, void* d) { return 1; }
+int  opj_setup_decoder(opj_codec_t* c, opj_dparameters_t* p) { return 0; }
+int  opj_setup_encoder(opj_codec_t* c, opj_cparameters_t* p, opj_image_t* img) { return 0; }
+int  opj_start_compress(opj_codec_t* c, opj_image_t* img, opj_stream_t* s) { return 0; }
+opj_stream_t* opj_stream_create(unsigned long long bsize, int is_input) { return NULL; }
+void opj_stream_destroy(opj_stream_t* s) {}
+void opj_stream_set_read_function(opj_stream_t* s, void* fn) {}
+void opj_stream_set_seek_function(opj_stream_t* s, void* fn) {}
+void opj_stream_set_skip_function(opj_stream_t* s, void* fn) {}
+void opj_stream_set_user_data(opj_stream_t* s, void* d, void* fn) {}
+void opj_stream_set_user_data_length(opj_stream_t* s, unsigned long long len) {}
+void opj_stream_set_write_function(opj_stream_t* s, void* fn) {}
+const char* opj_version(void) { return "2.5.3 stub"; }
+int  opj_write_tile(opj_codec_t* c, unsigned int tidx, unsigned char* d, unsigned int dlen, opj_stream_t* s) { return 0; }
+EOF
+
 gcc -shared -fPIC -O2 \
     -o libopenjp2-56811f71.so.2.5.3 libopenjp2_stub.c
 strip --strip-all libopenjp2-56811f71.so.2.5.3

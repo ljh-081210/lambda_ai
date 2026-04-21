@@ -23,7 +23,13 @@ ls *.so 2>/dev/null | grep -v "^_imaging\.cpython" | xargs rm -f 2>/dev/null || 
 ls *.py | grep -v -E "^(Image|ImageFile|ImageOps|ImageFilter|JpegImagePlugin|ExifTags|TiffImagePlugin|MpoImagePlugin|_binary|_deprecate|_util|__init__|_version)\.py$" | xargs rm -f 2>/dev/null || true
 cd ../..
 
-echo "--- 3. strip으로 디버그 심볼 제거 ---"
+echo "--- 3. pillow.libs에서 libjpeg만 남기고 제거 ---"
+cd package/pillow.libs
+ls | grep -v "^libjpeg" | xargs rm -f 2>/dev/null || true
+echo "  남은 파일: $(ls)"
+cd ../..
+
+echo "--- 4. strip으로 디버그 심볼 제거 ---"
 find ./package -name "*.so" | while read f; do
     BEFORE=$(wc -c < "$f")
     strip --strip-all "$f" 2>/dev/null || true
@@ -31,7 +37,7 @@ find ./package -name "*.so" | while read f; do
     echo "  strip: $f: ${BEFORE} → ${AFTER} bytes"
 done
 
-echo "--- 4. UPX로 추가 압축 ---"
+echo "--- 5. UPX로 추가 압축 ---"
 find ./package -name "*.so" | while read f; do
     BEFORE=$(wc -c < "$f")
     upx --best "$f" 2>/dev/null || true
@@ -39,10 +45,10 @@ find ./package -name "*.so" | while read f; do
     echo "  upx: $f: ${BEFORE} → ${AFTER} bytes"
 done
 
-echo "--- 5. 함수 코드 복사 ---"
+echo "--- 6. 함수 코드 복사 ---"
 cp lambda_function.py ./package/
 
-echo "--- 6. ZIP 생성 ---"
+echo "--- 7. ZIP 생성 ---"
 cd package && zip -r ../edge_function.zip . -x "*.pyc" > /dev/null && cd ..
 
 echo ""

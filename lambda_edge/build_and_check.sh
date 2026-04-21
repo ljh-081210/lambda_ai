@@ -9,21 +9,30 @@ echo "--- 1. Pillow 최소 설치 ---"
 pip3 install Pillow --target ./package --quiet --no-deps
 
 echo "--- 2. 불필요한 파일 제거 ---"
-# 테스트 파일 제거
 find ./package -name "*.pyc" -delete
 find ./package -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find ./package -name "tests" -exec rm -rf {} + 2>/dev/null || true
 find ./package -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
 
-# JPEG 외 PIL 플러그인 제거 (불필요한 포맷)
+# JPEG 외 PIL 플러그인 제거
 cd package/PIL
 ls *.py | grep -v -E "^(Image|ImageFile|ImageOps|ImageFilter|JpegImagePlugin|ExifTags|TiffImagePlugin|MpoImagePlugin|_binary|_deprecate|_util|__init__)\.py$" | xargs rm -f 2>/dev/null || true
+# JPEG 관련 .so 파일만 남기고 제거
+ls *.so 2>/dev/null | grep -v "_imaging" | xargs rm -f 2>/dev/null || true
 cd ../..
 
-echo "--- 3. 함수 코드 복사 ---"
+echo "--- 3. .so 파일 디버그 심볼 제거 (strip) ---"
+find ./package -name "*.so" | while read f; do
+    BEFORE=$(wc -c < "$f")
+    strip --strip-debug "$f" 2>/dev/null || true
+    AFTER=$(wc -c < "$f")
+    echo "  $f: ${BEFORE} → ${AFTER} bytes"
+done
+
+echo "--- 4. 함수 코드 복사 ---"
 cp lambda_function.py ./package/
 
-echo "--- 4. ZIP 생성 ---"
+echo "--- 5. ZIP 생성 ---"
 cd package && zip -r ../edge_function.zip . -x "*.pyc" > /dev/null && cd ..
 
 echo ""

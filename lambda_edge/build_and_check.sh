@@ -30,20 +30,13 @@ ls | grep -v -E "^(libjpeg|libtiff|libopenjp2|libxcb)" | xargs rm -f 2>/dev/null
 echo "  남은 파일: $(ls)"
 cd ../..
 
-echo "--- 4. strip으로 디버그 심볼 제거 ---"
-find ./package -name "*.so" | while read f; do
+echo "--- 4. 모든 .so 파일 strip + UPX 압축 ---"
+find ./package -name "*.so*" | while read f; do
     BEFORE=$(wc -c < "$f")
     strip --strip-all "$f" 2>/dev/null || true
+    upx --best --force "$f" 2>/dev/null || true
     AFTER=$(wc -c < "$f")
-    echo "  strip: $f: ${BEFORE} → ${AFTER} bytes"
-done
-
-echo "--- 5. UPX로 추가 압축 ---"
-find ./package -name "*.so" | while read f; do
-    BEFORE=$(wc -c < "$f")
-    upx --best "$f" 2>/dev/null || true
-    AFTER=$(wc -c < "$f")
-    echo "  upx: $f: ${BEFORE} → ${AFTER} bytes"
+    echo "  $f: ${BEFORE} → ${AFTER} bytes"
 done
 
 echo "--- 6. 함수 코드 복사 ---"

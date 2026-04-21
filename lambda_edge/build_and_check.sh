@@ -20,7 +20,7 @@ cd package/PIL
 ls *.so 2>/dev/null | grep -v "^_imaging\.cpython" | xargs rm -f 2>/dev/null || true
 
 # JPEG 외 PIL 플러그인 제거
-ls *.py | grep -v -E "^(Image|ImageFile|ImageMode|ImageOps|ImageFilter|ImagePalette|ImageChops|ImageColor|JpegImagePlugin|ExifTags|TiffImagePlugin|TiffTags|MpoImagePlugin|_binary|_deprecate|_util|__init__|_version)\.py$" | xargs rm -f 2>/dev/null || true
+# .py 파일은 용량이 작으므로 전부 유지
 cd ../..
 
 echo "--- 3. pillow.libs에서 libjpeg만 남기고 제거 ---"

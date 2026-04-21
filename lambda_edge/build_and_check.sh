@@ -23,9 +23,10 @@ ls *.so 2>/dev/null | grep -v "^_imaging\.cpython" | xargs rm -f 2>/dev/null || 
 # .py 파일은 용량이 작으므로 전부 유지
 cd ../..
 
-echo "--- 3. pillow.libs에서 libjpeg만 남기고 제거 ---"
+echo "--- 3. pillow.libs에서 필요한 라이브러리만 남기고 제거 ---"
 cd package/pillow.libs
-ls | grep -v "^libjpeg" | xargs rm -f 2>/dev/null || true
+# _imaging.so 실제 의존성: libjpeg, libtiff, libopenjp2, libxcb
+ls | grep -v -E "^(libjpeg|libtiff|libopenjp2|libxcb)" | xargs rm -f 2>/dev/null || true
 echo "  남은 파일: $(ls)"
 cd ../..
 

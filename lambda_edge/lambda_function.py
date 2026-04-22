@@ -1,10 +1,48 @@
 """
 Lambda@Edge - Viewer Request
 역할:
-  1. POST 요청에서 X-Image-Hash 헤더 읽기
-  2. POST → GET /infer?hash={pHash} 변환
-  (pHash 계산은 클라이언트에서 수행)
+  1. POST body에서 이미지 읽기 (PNG)
+  2. 순수 Python pHash 계산 (numpy 없음)
+  3. POST → GET /infer?hash={pHash} 변환
 """
+import base64
+import io
+import math
+from PIL import Image
+
+# cos 테이블 미리 계산 (속도 최적화)
+_N = 32
+_COS = [[math.cos(math.pi * k * (2 * n + 1) / (2 * _N))
+         for n in range(_N)] for k in range(_N)]
+
+
+def dct1d(x):
+    return [sum(x[n] * _COS[k][n] for n in range(_N)) for k in range(_N)]
+
+
+def phash(img, hash_size=8):
+    """순수 Python pHash - numpy/scipy 없이 구현"""
+    img = img.convert('L').resize((_N, _N), Image.LANCZOS)
+    pixels = list(img.getdata())
+    matrix = [[pixels[r * _N + c] for c in range(_N)] for r in range(_N)]
+
+    # 열 방향 DCT
+    col_dct = [dct1d([matrix[r][c] for r in range(_N)]) for c in range(_N)]
+    # 행 방향 DCT
+    row_dct = [dct1d([col_dct[c][k] for c in range(_N)]) for k in range(_N)]
+
+    # 좌상단 8x8
+    vals = [row_dct[k][m] for k in range(hash_size) for m in range(hash_size)]
+    med = sorted(vals[1:])[len(vals) // 2]  # DC 성분(index 0) 제외
+    return int(''.join('1' if v > med else '0' for v in vals), 2)
+
+
+def canonical_hash(img):
+    """회전 불변 해시: 0/90/180/270도 회전 중 최솟값"""
+    return format(
+        min(phash(img.rotate(a, expand=True)) for a in [0, 90, 180, 270]),
+        '016x'
+    )
 
 
 def lambda_handler(event, context):
@@ -14,20 +52,25 @@ def lambda_handler(event, context):
     if request['method'] != 'POST':
         return request
 
-    # 클라이언트가 보낸 X-Image-Hash 헤더에서 hash 읽기
-    headers = request.get('headers', {})
-    hash_header = headers.get('x-image-hash', [{}])
-    image_hash = hash_header[0].get('value', '') if hash_header else ''
-
-    if not image_hash:
-        # hash 없으면 그대로 통과
+    # body 읽기
+    body_obj = request.get('body', {})
+    if not body_obj or not body_obj.get('data'):
         return request
+
+    raw = body_obj['data']
+    if body_obj.get('encoding') == 'base64':
+        img_bytes = base64.b64decode(raw)
+    else:
+        img_bytes = raw.encode('latin-1') if isinstance(raw, str) else raw
+
+    # pHash 계산 (PNG로 전송 필요 - stub libjpeg는 JPEG 디코딩 불가)
+    img = Image.open(io.BytesIO(img_bytes))
+    image_hash = canonical_hash(img)
 
     # POST → GET /infer?hash={pHash} 변환
     request['method'] = 'GET'
     request['uri'] = '/infer'
     request['querystring'] = f'hash={image_hash}'
-    # GET 요청은 body 없어야 함 - 제거
     request.pop('body', None)
 
     return request

@@ -1,26 +1,28 @@
 """
 End-to-End 테스트 스크립트
 흐름:
-  1. 이미지 pHash 계산 (클라이언트)
-  2. S3에 이미지 업로드
-  3. CloudFront에 POST (X-Image-Hash 헤더 포함)
-  4. X-Cache 헤더로 HIT/MISS 확인
+  1. 이미지를 PNG로 변환 (Lambda@Edge에서 Pillow로 디코딩)
+  2. S3에 이미지 업로드 (origin Lambda가 추론에 사용)
+  3. CloudFront에 POST (PNG body 포함)
+  4. Lambda@Edge가 pHash 계산 → GET /infer?hash={hash} 변환
+  5. X-Cache 헤더로 HIT/MISS 확인
 
 사용법:
   python3 test_e2e.py dog.jpeg dog_rotated.jpeg dog2.jpeg
 """
 import sys
 import os
+import io
 import boto3
 import requests
-import imagehash
 from PIL import Image, ExifTags
-import io
 
 CLOUDFRONT_URL = os.environ.get('CLOUDFRONT_URL', '')
 S3_BUCKET = os.environ.get('S3_BUCKET', '')
 
 s3_client = boto3.client('s3', region_name='ap-northeast-2')
+
+MAX_SIZE = 512  # 최대 512x512 (PNG 1MB 이내 유지)
 
 
 def fix_exif_rotation(img):
@@ -38,12 +40,18 @@ def fix_exif_rotation(img):
     return img
 
 
-def compute_canonical_hash(img):
-    hashes = [str(imagehash.phash(img.rotate(angle))) for angle in [0, 90, 180, 270]]
-    return min(hashes)
+def to_png_bytes(img):
+    """이미지를 PNG 바이트로 변환 (최대 512x512 리사이즈)"""
+    img = img.convert('RGB')
+    if img.width > MAX_SIZE or img.height > MAX_SIZE:
+        img.thumbnail((MAX_SIZE, MAX_SIZE), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    return buf.getvalue()
 
 
 def upload_to_s3(img, image_hash):
+    """S3에 JPEG로 저장 (origin Lambda가 MobileNetV2 추론에 사용)"""
     buf = io.BytesIO()
     img.convert('RGB').save(buf, format='JPEG')
     s3_client.put_object(
@@ -58,40 +66,35 @@ def send_request(image_path):
     img = Image.open(image_path)
     img = fix_exif_rotation(img)
 
-    # 1. pHash 계산
-    image_hash = compute_canonical_hash(img)
+    # PNG 바이트 변환
+    png_bytes = to_png_bytes(img)
+    print(f"[{image_path}]")
+    print(f"  PNG 크기: {len(png_bytes):,} bytes")
 
-    # 2. S3 업로드 (MISS일 때 Origin Lambda가 사용)
-    upload_to_s3(img, image_hash)
+    # CloudFront에 POST (PNG body)
+    # Lambda@Edge가 pHash 계산 → GET /infer?hash={hash} 변환
+    response = requests.post(
+        CLOUDFRONT_URL,
+        data=png_bytes,
+        headers={'Content-Type': 'image/png'},
+    )
 
-    # 3. CloudFront에 POST (X-Image-Hash 헤더 포함)
-    with open(image_path, 'rb') as f:
-        response = requests.post(
-            CLOUDFRONT_URL,
-            data=f,
-            headers={
-                'Content-Type': 'image/jpeg',
-                'X-Image-Hash': image_hash,
-            }
-        )
-
-    # 4. X-Cache 헤더로 HIT/MISS 확인
     x_cache = response.headers.get('X-Cache', 'unknown')
     cache_result = 'HIT' if 'Hit' in x_cache else 'MISS'
 
-    print(f"[{image_path}]")
-    print(f"  hash   : {image_hash}")
     print(f"  X-Cache: {x_cache}")
     print(f"  결과   : Cache {cache_result}")
-    print(f"  응답   : {response.json()}")
+    try:
+        print(f"  응답   : {response.json()}")
+    except Exception:
+        print(f"  응답   : {response.status_code} {response.text[:200]}")
     print()
 
 
 if __name__ == '__main__':
-    if not CLOUDFRONT_URL or not S3_BUCKET:
+    if not CLOUDFRONT_URL:
         print("환경변수 설정 필요:")
         print("  export CLOUDFRONT_URL=https://xxxx.cloudfront.net")
-        print("  export S3_BUCKET=mobilenet-images-xxxx")
         sys.exit(1)
 
     if len(sys.argv) < 2:

@@ -27,6 +27,7 @@ def lambda_handler(event, context):
     request['method'] = 'GET'
     request['uri'] = '/infer'
     request['querystring'] = f'hash={image_hash}'
-    request['body'] = {}
+    # GET 요청은 body 없어야 함 - 제거
+    request.pop('body', None)
 
     return request

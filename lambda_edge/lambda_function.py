@@ -39,7 +39,12 @@ def decode_png(data):
         elif tag == b'IEND':
             break
 
-    raw = zlib.decompress(idat)
+    print(f"[DEBUG] PNG {width}x{height} color_type={color_type} idat_len={len(idat)} first8={data[:8].hex()}")
+    try:
+        raw = zlib.decompress(idat)
+    except zlib.error:
+        # wbits=47: zlib+gzip 자동 감지
+        raw = zlib.decompress(idat, wbits=47)
     ch = {0: 1, 2: 3, 4: 2, 6: 4}.get(color_type, 3)
     stride = width * ch
     prev = bytearray(stride)

@@ -65,9 +65,14 @@ def lambda_handler(event, context):
     else:
         img_bytes = raw.encode('latin-1') if isinstance(raw, str) else raw
 
+    # body 정보 로깅
+    print(f"[DEBUG] body encoding: {body_obj.get('encoding')}, "
+          f"size: {len(raw)}, truncated: {body_obj.get('inputTruncated')}")
+
     # pHash 계산
     img = Image.open(io.BytesIO(img_bytes))
     image_hash = canonical_hash(img)
+    print(f"[DEBUG] computed hash: {image_hash}")
 
     # S3에 업로드 (origin Lambda가 추론에 사용)
     s3.put_object(
@@ -82,5 +87,6 @@ def lambda_handler(event, context):
     request['uri'] = '/infer'
     request['querystring'] = f'hash={image_hash}'
     request.pop('body', None)
+    print(f"[DEBUG] converted to GET /infer?hash={image_hash}")
 
     return request

@@ -8,7 +8,10 @@ Lambda@Edge - Viewer Request
 import base64
 import io
 import math
-from PIL import Image
+from PIL import Image, ImageFile
+
+# 잘린 이미지도 처리 허용 (CloudFront body 전달 시 truncation 대응)
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # cos 테이블 미리 계산 (속도 최적화)
 _N = 32

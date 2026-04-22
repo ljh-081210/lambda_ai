@@ -1,6 +1,7 @@
 import time
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ.setdefault('KERAS_HOME', '/var/task/.keras')
 
 cold_start_begin = time.perf_counter()
 

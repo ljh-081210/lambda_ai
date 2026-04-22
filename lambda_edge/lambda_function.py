@@ -39,18 +39,25 @@ def decode_png(data):
         elif tag == b'IEND':
             break
 
-    print(f"[DEBUG] PNG {width}x{height} color_type={color_type} idat_len={len(idat)} first8={data[:8].hex()}")
+    print(f"[DEBUG] PNG {width}x{height} color_type={color_type} idat_len={len(idat)}")
+    # 잘린 IDAT도 최대한 디코딩 (40KB viewer request 한도 대응)
+    d = zlib.decompressobj()
+    parts = []
     try:
-        raw = zlib.decompress(idat)
+        parts.append(d.decompress(idat))
+        parts.append(d.flush())
     except zlib.error:
-        # wbits=47: zlib+gzip 자동 감지
-        raw = zlib.decompress(idat, wbits=47)
+        parts.append(d.decompress(idat))
+    raw = b''.join(parts)
+
     ch = {0: 1, 2: 3, 4: 2, 6: 4}.get(color_type, 3)
     stride = width * ch
     prev = bytearray(stride)
     pixels = []
+    actual_rows = len(raw) // (stride + 1)
+    print(f"[DEBUG] actual_rows={actual_rows}/{height}")
 
-    for y in range(height):
+    for y in range(min(height, actual_rows)):
         off = y * (stride + 1)
         ft = raw[off]
         row = bytearray(raw[off + 1:off + 1 + stride])

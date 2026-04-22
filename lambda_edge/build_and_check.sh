@@ -7,7 +7,7 @@ rm -rf package edge_function.zip
 mkdir -p package
 
 echo "--- 1. Pillow 최소 설치 ---"
-pip3 install Pillow --target ./package --quiet --no-deps
+python3.11 -m pip install Pillow --target ./package --quiet --no-deps
 
 echo "--- 2. 불필요한 파일 제거 ---"
 find ./package -name "*.pyc" -delete

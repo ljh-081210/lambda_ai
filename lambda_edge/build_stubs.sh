@@ -3,6 +3,83 @@ set -e
 
 echo "=== Stub 라이브러리 생성 ==="
 
+# 실제 파일명 동적 탐지
+LIBJPEG_FILE=$(ls package/pillow.libs/libjpeg-*.so.* 2>/dev/null | head -1)
+LIBTIFF_FILE=$(ls package/pillow.libs/libtiff-*.so.* 2>/dev/null | head -1)
+LIBXCB_FILE=$(ls package/pillow.libs/libxcb-*.so.* 2>/dev/null | head -1)
+LIBOPENJP2_FILE=$(ls package/pillow.libs/libopenjp2-*.so.* 2>/dev/null | head -1)
+
+echo "대체 대상:"
+echo "  libjpeg  : ${LIBJPEG_FILE:-없음}"
+echo "  libtiff  : ${LIBTIFF_FILE:-없음}"
+echo "  libxcb   : ${LIBXCB_FILE:-없음}"
+echo "  libopenjp2: ${LIBOPENJP2_FILE:-없음}"
+
+# ── libjpeg stub ──────────────────────────────────────────
+cat > libjpeg_stub.c << 'EOF'
+#include <stdlib.h>
+#include <string.h>
+
+struct jpeg_error_mgr {
+    void* error_exit; void* emit_message; void* output_message;
+    void* format_message; void* reset_error_mgr;
+    int msg_code;
+    union { int i[8]; char s[80]; double d; } msg_parm;
+    int trace_level; long num_warnings;
+    const char* const* jpeg_message_table; int last_jpeg_message;
+    const char* const* addon_message_table;
+    int first_addon_message; int last_addon_message;
+};
+
+typedef void* j_common_ptr;
+typedef void* j_compress_ptr;
+typedef void* j_decompress_ptr;
+
+struct jpeg_error_mgr* jpeg_std_error(struct jpeg_error_mgr* err) {
+    memset(err, 0, sizeof(*err)); return err;
+}
+void jpeg_CreateDecompress(j_decompress_ptr c, int v, size_t s) {}
+void jpeg_CreateCompress(j_compress_ptr c, int v, size_t s) {}
+void jpeg_stdio_src(j_decompress_ptr c, void* f) {}
+void jpeg_stdio_dest(j_compress_ptr c, void* f) {}
+void jpeg_mem_src(j_decompress_ptr c, const unsigned char* b, unsigned long s) {}
+void jpeg_mem_dest(j_compress_ptr c, unsigned char** b, unsigned long* s) {}
+int  jpeg_read_header(j_decompress_ptr c, int r) { return 0; }
+int  jpeg_start_decompress(j_decompress_ptr c) { return 0; }
+unsigned int jpeg_read_scanlines(j_decompress_ptr c, unsigned char** s, unsigned int m) { return 0; }
+int  jpeg_finish_decompress(j_decompress_ptr c) { return 0; }
+void jpeg_abort_decompress(j_decompress_ptr c) {}
+void jpeg_destroy_decompress(j_decompress_ptr c) {}
+void jpeg_set_defaults(j_compress_ptr c) {}
+void jpeg_set_quality(j_compress_ptr c, int q, int f) {}
+int  jpeg_start_compress(j_compress_ptr c, int w) { return 0; }
+unsigned int jpeg_write_scanlines(j_compress_ptr c, unsigned char** s, unsigned int n) { return 0; }
+int  jpeg_finish_compress(j_compress_ptr c) { return 0; }
+void jpeg_abort_compress(j_compress_ptr c) {}
+void jpeg_destroy_compress(j_compress_ptr c) {}
+int  jpeg_resync_to_restart(j_decompress_ptr c, int d) { return 0; }
+void jpeg_save_markers(j_decompress_ptr c, int m, unsigned int l) {}
+void jpeg_copy_critical_parameters(j_decompress_ptr s, j_compress_ptr d) {}
+void jpeg_suppress_tables(j_compress_ptr c, int s) {}
+void jpeg_abort(j_common_ptr c) {}
+void jpeg_destroy(j_common_ptr c) {}
+int  jpeg_input_complete(j_decompress_ptr c) { return 0; }
+int  jpeg_consume_input(j_decompress_ptr c) { return 0; }
+void jpeg_calc_output_dimensions(j_decompress_ptr c) {}
+int  jpeg_has_multiple_scans(j_decompress_ptr c) { return 0; }
+int  jpeg_start_output(j_decompress_ptr c, int s) { return 0; }
+void jpeg_finish_output(j_decompress_ptr c) {}
+void jpeg_write_marker(j_compress_ptr c, int m, const unsigned char* d, unsigned int l) {}
+void jpeg_write_tables(j_compress_ptr c) {}
+void jpeg_simple_progression(j_compress_ptr c) {}
+int  jpeg_read_icc_profile(j_decompress_ptr c, unsigned char** d, unsigned int* l) { return 0; }
+void jpeg_write_icc_profile(j_compress_ptr c, const unsigned char* d, unsigned int l) {}
+EOF
+
+gcc -shared -fPIC -O2 -o libjpeg_stub.so libjpeg_stub.c
+strip --strip-all libjpeg_stub.so
+echo "libjpeg stub: $(wc -c < libjpeg_stub.so) bytes"
+
 # ── libtiff stub ──────────────────────────────────────────
 cat > libtiff_stub.c << 'EOF'
 #include <stdlib.h>
@@ -63,9 +140,9 @@ EOF
 
 gcc -shared -fPIC -O2 \
     -Wl,--version-script=libtiff.map \
-    -o libtiff-13a02c81.so.6.1.0 libtiff_stub.c
-strip --strip-all libtiff-13a02c81.so.6.1.0
-echo "libtiff stub: $(wc -c < libtiff-13a02c81.so.6.1.0) bytes"
+    -o libtiff_stub.so libtiff_stub.c
+strip --strip-all libtiff_stub.so
+echo "libtiff stub: $(wc -c < libtiff_stub.so) bytes"
 
 # ── libxcb stub ───────────────────────────────────────────
 cat > libxcb_stub.c << 'EOF'
@@ -74,7 +151,7 @@ cat > libxcb_stub.c << 'EOF'
 typedef struct { int has_error; } xcb_connection_t;
 typedef struct { int root; } xcb_screen_t;
 typedef struct { xcb_screen_t* data; } xcb_screen_iterator_t;
-typedef struct {} xcb_get_image_reply_t;
+typedef struct { int pad; } xcb_get_image_reply_t;
 typedef int xcb_drawable_t;
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
@@ -84,21 +161,21 @@ xcb_connection_t* xcb_connect(const char* d, int* s) { return NULL; }
 int  xcb_connection_has_error(xcb_connection_t* c) { return 1; }
 void xcb_disconnect(xcb_connection_t* c) {}
 xcb_get_image_reply_t* xcb_get_image(void* c, uint8_t f,
-    xcb_drawable_t d, int16_t x, int16_t y,
+    xcb_drawable_t d, short x, short y,
     uint16_t w, uint16_t h, uint32_t m) { return NULL; }
 uint8_t* xcb_get_image_data(xcb_get_image_reply_t* r) { return NULL; }
 int xcb_get_image_data_length(xcb_get_image_reply_t* r) { return 0; }
 xcb_get_image_reply_t* xcb_get_image_reply(void* c, void* cookie, void** e) { return NULL; }
 const void* xcb_get_setup(xcb_connection_t* c) { return NULL; }
 void xcb_screen_next(xcb_screen_iterator_t* i) {}
-xcb_screen_iterator_t xcb_setup_roots_iterator(const void* s) { xcb_screen_iterator_t i = {NULL}; return i; }
+xcb_screen_iterator_t xcb_setup_roots_iterator(const void* s) {
+    xcb_screen_iterator_t i = {NULL}; return i;
+}
 EOF
 
-gcc -shared -fPIC -O2 \
-    -o libxcb-64009ff3.so.1.1.0 libxcb_stub.c
-strip --strip-all libxcb-64009ff3.so.1.1.0
-echo "libxcb stub: $(wc -c < libxcb-64009ff3.so.6.1.0) bytes" 2>/dev/null || \
-echo "libxcb stub: $(wc -c < libxcb-64009ff3.so.1.1.0) bytes"
+gcc -shared -fPIC -O2 -o libxcb_stub.so libxcb_stub.c
+strip --strip-all libxcb_stub.so
+echo "libxcb stub: $(wc -c < libxcb_stub.so) bytes"
 
 # ── libopenjp2 stub ───────────────────────────────────────
 cat > libopenjp2_stub.c << 'EOF'
@@ -120,7 +197,9 @@ int  opj_end_decompress(opj_codec_t* c, opj_stream_t* s) { return 0; }
 opj_image_t* opj_image_create(unsigned int n, void* cmptparms, int clrspc) { return NULL; }
 void opj_image_destroy(opj_image_t* img) {}
 int  opj_read_header(opj_stream_t* s, opj_codec_t* c, opj_image_t** img) { return 0; }
-int  opj_read_tile_header(opj_codec_t* c, unsigned int* tidx, unsigned long long* dlen, int* tx0, int* ty0, int* tx1, int* ty1, unsigned int* ncomps, int* go_on, opj_stream_t* s) { return 0; }
+int  opj_read_tile_header(opj_codec_t* c, unsigned int* tidx, unsigned long long* dlen,
+    int* tx0, int* ty0, int* tx1, int* ty1,
+    unsigned int* ncomps, int* go_on, opj_stream_t* s) { return 0; }
 void opj_set_default_decoder_parameters(opj_dparameters_t* p) {}
 void opj_set_default_encoder_parameters(opj_cparameters_t* p) {}
 int  opj_set_error_handler(opj_codec_t* c, void* h, void* d) { return 1; }
@@ -137,19 +216,34 @@ void opj_stream_set_skip_function(opj_stream_t* s, void* fn) {}
 void opj_stream_set_user_data(opj_stream_t* s, void* d, void* fn) {}
 void opj_stream_set_user_data_length(opj_stream_t* s, unsigned long long len) {}
 void opj_stream_set_write_function(opj_stream_t* s, void* fn) {}
-const char* opj_version(void) { return "2.5.3 stub"; }
+const char* opj_version(void) { return "2.5.4 stub"; }
 int  opj_write_tile(opj_codec_t* c, unsigned int tidx, unsigned char* d, unsigned int dlen, opj_stream_t* s) { return 0; }
 EOF
 
-gcc -shared -fPIC -O2 \
-    -o libopenjp2-56811f71.so.2.5.3 libopenjp2_stub.c
-strip --strip-all libopenjp2-56811f71.so.2.5.3
-echo "libopenjp2 stub: $(wc -c < libopenjp2-56811f71.so.2.5.3) bytes"
+gcc -shared -fPIC -O2 -o libopenjp2_stub.so libopenjp2_stub.c
+strip --strip-all libopenjp2_stub.so
+echo "libopenjp2 stub: $(wc -c < libopenjp2_stub.so) bytes"
 
-# ── 패키지에 복사 ─────────────────────────────────────────
-cp libtiff-13a02c81.so.6.1.0 package/pillow.libs/
-cp libxcb-64009ff3.so.1.1.0 package/pillow.libs/
-cp libopenjp2-56811f71.so.2.5.3 package/pillow.libs/
+# ── 패키지에 복사 (동적 파일명으로 원본 덮어쓰기) ────────
+echo ""
+echo "--- 원본 .so 파일을 stub으로 교체 ---"
+
+if [ -n "$LIBJPEG_FILE" ]; then
+    cp libjpeg_stub.so "$LIBJPEG_FILE"
+    echo "  ✅ libjpeg  교체: $LIBJPEG_FILE ($(wc -c < "$LIBJPEG_FILE") bytes)"
+fi
+if [ -n "$LIBTIFF_FILE" ]; then
+    cp libtiff_stub.so "$LIBTIFF_FILE"
+    echo "  ✅ libtiff  교체: $LIBTIFF_FILE ($(wc -c < "$LIBTIFF_FILE") bytes)"
+fi
+if [ -n "$LIBXCB_FILE" ]; then
+    cp libxcb_stub.so "$LIBXCB_FILE"
+    echo "  ✅ libxcb   교체: $LIBXCB_FILE ($(wc -c < "$LIBXCB_FILE") bytes)"
+fi
+if [ -n "$LIBOPENJP2_FILE" ]; then
+    cp libopenjp2_stub.so "$LIBOPENJP2_FILE"
+    echo "  ✅ libopenjp2 교체: $LIBOPENJP2_FILE ($(wc -c < "$LIBOPENJP2_FILE") bytes)"
+fi
 
 echo ""
 echo "=== 최종 ZIP 크기 확인 ==="
@@ -165,5 +259,7 @@ else
 fi
 
 # 정리
-rm -f libtiff_stub.c libtiff.map libxcb_stub.c libopenjp2_stub.c
-rm -f libtiff-13a02c81.so.6.1.0 libxcb-64009ff3.so.1.1.0 libopenjp2-56811f71.so.2.5.3
+rm -f libjpeg_stub.c libjpeg_stub.so
+rm -f libtiff_stub.c libtiff.map libtiff_stub.so
+rm -f libxcb_stub.c libxcb_stub.so
+rm -f libopenjp2_stub.c libopenjp2_stub.so

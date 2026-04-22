@@ -155,9 +155,13 @@ def lambda_handler(event, context):
         ContentType='image/png'
     )
 
-    request['method'] = 'GET'
-    request['uri'] = '/infer'
-    request['querystring'] = f'hash={image_hash}'
-    request.pop('body', None)
-
-    return request
+    # POST → 302 redirect to GET /infer?hash=xxx
+    # CloudFront는 GET 요청만 캐시하므로, 클라이언트가 리다이렉트를 따라가면 캐시 HIT 가능
+    return {
+        'status': '302',
+        'statusDescription': 'Found',
+        'headers': {
+            'location': [{'key': 'Location', 'value': f'/infer?hash={image_hash}'}],
+            'cache-control': [{'key': 'Cache-Control', 'value': 'no-store'}]
+        }
+    }

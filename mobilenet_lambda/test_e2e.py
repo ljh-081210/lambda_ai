@@ -51,11 +51,13 @@ def send_request(image_path):
     img = fix_exif_rotation(img)
     png_bytes = to_png_bytes(img)
 
-    # CloudFront에 POST (Lambda@Edge가 pHash 계산 + S3 업로드 + GET 변환)
+    # CloudFront에 POST (Lambda@Edge가 pHash 계산 + S3 업로드 + 302 redirect)
+    # allow_redirects=True: 302 → GET /infer?hash=xxx 자동 follow
     response = requests.post(
         CLOUDFRONT_URL,
         data=png_bytes,
         headers={'Content-Type': 'image/png'},
+        allow_redirects=True,
     )
 
     x_cache = response.headers.get('X-Cache', 'unknown')

@@ -40,43 +40,45 @@ struct jpeg_error_mgr* jpeg_std_error(struct jpeg_error_mgr* err) {
 }
 void jpeg_CreateDecompress(j_decompress_ptr c, int v, size_t s) {}
 void jpeg_CreateCompress(j_compress_ptr c, int v, size_t s) {}
-void jpeg_stdio_src(j_decompress_ptr c, void* f) {}
-void jpeg_stdio_dest(j_compress_ptr c, void* f) {}
-void jpeg_mem_src(j_decompress_ptr c, const unsigned char* b, unsigned long s) {}
-void jpeg_mem_dest(j_compress_ptr c, unsigned char** b, unsigned long* s) {}
-int  jpeg_read_header(j_decompress_ptr c, int r) { return 0; }
-int  jpeg_start_decompress(j_decompress_ptr c) { return 0; }
-unsigned int jpeg_read_scanlines(j_decompress_ptr c, unsigned char** s, unsigned int m) { return 0; }
-int  jpeg_finish_decompress(j_decompress_ptr c) { return 0; }
-void jpeg_abort_decompress(j_decompress_ptr c) {}
+int  jpeg_add_quant_table(j_compress_ptr c, int w, const unsigned int* b, int s, int f) { return 0; }
+void jpeg_destroy_compress(j_compress_ptr c) {}
 void jpeg_destroy_decompress(j_decompress_ptr c) {}
+int  jpeg_finish_compress(j_compress_ptr c) { return 0; }
+int  jpeg_finish_decompress(j_decompress_ptr c) { return 0; }
+int  jpeg_quality_scaling(int q) { return q; }
+int  jpeg_read_header(j_decompress_ptr c, int r) { return 0; }
+unsigned int jpeg_read_scanlines(j_decompress_ptr c, unsigned char** s, unsigned int m) { return 0; }
+int  jpeg_resync_to_restart(j_decompress_ptr c, int d) { return 0; }
+void jpeg_set_colorspace(j_compress_ptr c, int cs) {}
 void jpeg_set_defaults(j_compress_ptr c) {}
 void jpeg_set_quality(j_compress_ptr c, int q, int f) {}
-int  jpeg_start_compress(j_compress_ptr c, int w) { return 0; }
-unsigned int jpeg_write_scanlines(j_compress_ptr c, unsigned char** s, unsigned int n) { return 0; }
-int  jpeg_finish_compress(j_compress_ptr c) { return 0; }
-void jpeg_abort_compress(j_compress_ptr c) {}
-void jpeg_destroy_compress(j_compress_ptr c) {}
-int  jpeg_resync_to_restart(j_decompress_ptr c, int d) { return 0; }
-void jpeg_save_markers(j_decompress_ptr c, int m, unsigned int l) {}
-void jpeg_copy_critical_parameters(j_decompress_ptr s, j_compress_ptr d) {}
-void jpeg_suppress_tables(j_compress_ptr c, int s) {}
-void jpeg_abort(j_common_ptr c) {}
-void jpeg_destroy(j_common_ptr c) {}
-int  jpeg_input_complete(j_decompress_ptr c) { return 0; }
-int  jpeg_consume_input(j_decompress_ptr c) { return 0; }
-void jpeg_calc_output_dimensions(j_decompress_ptr c) {}
-int  jpeg_has_multiple_scans(j_decompress_ptr c) { return 0; }
-int  jpeg_start_output(j_decompress_ptr c, int s) { return 0; }
-void jpeg_finish_output(j_decompress_ptr c) {}
-void jpeg_write_marker(j_compress_ptr c, int m, const unsigned char* d, unsigned int l) {}
-void jpeg_write_tables(j_compress_ptr c) {}
 void jpeg_simple_progression(j_compress_ptr c) {}
-int  jpeg_read_icc_profile(j_decompress_ptr c, unsigned char** d, unsigned int* l) { return 0; }
-void jpeg_write_icc_profile(j_compress_ptr c, const unsigned char* d, unsigned int l) {}
+int  jpeg_start_compress(j_compress_ptr c, int w) { return 0; }
+int  jpeg_start_decompress(j_decompress_ptr c) { return 0; }
+void jpeg_suppress_tables(j_compress_ptr c, int s) {}
+void jpeg_write_marker(j_compress_ptr c, int m, const unsigned char* d, unsigned int l) {}
+unsigned int jpeg_write_scanlines(j_compress_ptr c, unsigned char** s, unsigned int n) { return 0; }
+void jpeg_write_tables(j_compress_ptr c) {}
 EOF
 
-gcc -shared -fPIC -O2 -o libjpeg_stub.so libjpeg_stub.c
+cat > libjpeg.map << 'EOF'
+LIBJPEG_6.2 {
+    global:
+        jpeg_std_error; jpeg_CreateCompress; jpeg_CreateDecompress;
+        jpeg_add_quant_table; jpeg_destroy_compress; jpeg_destroy_decompress;
+        jpeg_finish_compress; jpeg_finish_decompress; jpeg_quality_scaling;
+        jpeg_read_header; jpeg_read_scanlines; jpeg_resync_to_restart;
+        jpeg_set_colorspace; jpeg_set_defaults; jpeg_set_quality;
+        jpeg_simple_progression; jpeg_start_compress; jpeg_start_decompress;
+        jpeg_suppress_tables; jpeg_write_marker; jpeg_write_scanlines;
+        jpeg_write_tables;
+    local: *;
+};
+EOF
+
+gcc -shared -fPIC -O2 \
+    -Wl,--version-script=libjpeg.map \
+    -o libjpeg_stub.so libjpeg_stub.c
 strip --strip-all libjpeg_stub.so
 echo "libjpeg stub: $(wc -c < libjpeg_stub.so) bytes"
 
@@ -259,7 +261,7 @@ else
 fi
 
 # 정리
-rm -f libjpeg_stub.c libjpeg_stub.so
+rm -f libjpeg_stub.c libjpeg.map libjpeg_stub.so
 rm -f libtiff_stub.c libtiff.map libtiff_stub.so
 rm -f libxcb_stub.c libxcb_stub.so
 rm -f libopenjp2_stub.c libopenjp2_stub.so

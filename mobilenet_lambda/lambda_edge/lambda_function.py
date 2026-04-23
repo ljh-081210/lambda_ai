@@ -3,14 +3,16 @@ Lambda@Edge - Viewer Request
 역할:
   1. POST body에서 PNG 이미지 읽기 (순수 Python, Pillow 없음)
   2. pHash 계산 (순수 Python DCT)
-  3. S3에 이미지 저장 (hash를 키로)
-  4. POST → GET /infer?hash={pHash} 변환
+  3. S3 결과 캐시 확인 → HIT이면 바로 반환
+  4. MISS면 이미지 S3 저장 후 origin으로 GET 전달
 """
 import base64
+import json
 import math
 import struct
 import zlib
 import boto3
+from botocore.exceptions import ClientError
 
 S3_BUCKET = 'lambda-ai-ljh'
 s3 = boto3.client('s3', region_name='ap-northeast-2')
@@ -40,7 +42,6 @@ def decode_png(data):
             break
 
     print(f"[DEBUG] PNG {width}x{height} color_type={color_type} idat_len={len(idat)}")
-    # 잘린 IDAT도 최대한 디코딩 (40KB viewer request 한도 대응)
     d = zlib.decompressobj()
     parts = []
     try:
@@ -115,7 +116,7 @@ def phash(pixels_flat, hash_size=8):
     row_dct = [dct1d([col_dct[c][k] for c in range(_N)]) for k in range(_N)]
     vals = [row_dct[k][m] for k in range(hash_size) for m in range(hash_size)]
     sv = sorted(vals)
-    med = (sv[31] + sv[32]) / 2  # 64개 값의 중앙값 (imagehash 방식)
+    med = (sv[31] + sv[32]) / 2
     return int(''.join('1' if v > med else '0' for v in vals), 2)
 
 
@@ -148,20 +149,33 @@ def lambda_handler(event, context):
     image_hash = canonical_hash(img_bytes)
     print(f"[INFO] hash={image_hash}, size={len(img_bytes)}")
 
-    s3.put_object(
-        Bucket=S3_BUCKET,
-        Key=image_hash,
-        Body=img_bytes,
-        ContentType='image/png'
-    )
-
-    # POST → 302 redirect to GET /infer?hash=xxx
-    # CloudFront는 GET 요청만 캐시하므로, 클라이언트가 리다이렉트를 따라가면 캐시 HIT 가능
-    return {
-        'status': '302',
-        'statusDescription': 'Found',
-        'headers': {
-            'location': [{'key': 'Location', 'value': f'/infer?hash={image_hash}'}],
-            'cache-control': [{'key': 'Cache-Control', 'value': 'no-store'}]
+    # ── S3 결과 캐시 확인 ──────────────────────────────────
+    result_key = f"result/{image_hash}.json"
+    try:
+        obj = s3.get_object(Bucket=S3_BUCKET, Key=result_key)
+        cached = obj['Body'].read().decode('utf-8')
+        print(f"[INFO] Cache HIT: {result_key}")
+        return {
+            'status': '200',
+            'statusDescription': 'OK',
+            'headers': {
+                'content-type': [{'key': 'Content-Type', 'value': 'application/json'}],
+                'x-cache-status': [{'key': 'X-Cache-Status', 'value': 'HIT'}],
+            },
+            'body': cached
         }
-    }
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'NoSuchKey':
+            print(f"[WARN] S3 cache check error: {e}")
+    except Exception as e:
+        print(f"[WARN] S3 cache check error: {e}")
+
+    # ── Cache MISS: 이미지 저장 후 origin으로 전달 ────────
+    print(f"[INFO] Cache MISS: {result_key}")
+    s3.put_object(Bucket=S3_BUCKET, Key=image_hash, Body=img_bytes, ContentType='image/png')
+
+    request['method'] = 'GET'
+    request['uri'] = '/infer'
+    request['querystring'] = f'hash={image_hash}'
+    request.pop('body', None)
+    return request

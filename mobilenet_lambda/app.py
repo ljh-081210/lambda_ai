@@ -74,10 +74,24 @@ def lambda_handler(event, context):
         for i, (cls_id, lbl, score) in enumerate(top5)
     ]
 
-    return build_response(200, {
+    result = {
         'hash': image_hash,
         'predictions': predictions,
         'cold_start_time_s': round(cold_start_time, 4),
         'inference_time_s': round(inference_end - inference_start, 4),
         'execution_time_s': round(time.perf_counter() - execution_start, 4),
-    }, cache=True)
+    }
+
+    # 추론 결과 S3에 캐시 저장 (Lambda@Edge가 다음 요청에서 바로 반환)
+    try:
+        result_key = f"result/{image_hash}.json"
+        s3_client.put_object(
+            Bucket=S3_BUCKET,
+            Key=result_key,
+            Body=json.dumps(result, ensure_ascii=False),
+            ContentType='application/json'
+        )
+    except Exception as e:
+        print(f"[WARN] S3 cache write failed: {e}")
+
+    return build_response(200, result, cache=True)

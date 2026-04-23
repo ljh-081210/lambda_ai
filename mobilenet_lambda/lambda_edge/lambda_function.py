@@ -90,7 +90,7 @@ def decode_png(data):
             else:                       # Grayscale / Grayscale+Alpha
                 pixels.append(row[x * ch])
 
-    return width, height, pixels
+    return width, actual_rows, pixels
 
 
 def resize_nn(pixels, sw, sh, dw=_N, dh=_N):

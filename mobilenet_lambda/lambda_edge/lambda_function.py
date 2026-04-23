@@ -160,7 +160,7 @@ def lambda_handler(event, context):
 
     # ── S3에서 예시 이미지 로드 ───────────────────────────
     # S3 경로: examples/<name>.png
-    s3_key = f'examples/{image_name}.png'
+    s3_key = f'example/{image_name}.png'
     try:
         obj = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
         img_bytes = obj['Body'].read()

@@ -3,8 +3,10 @@ Lambda@Edge - Viewer Request
 역할:
   1. POST body에서 PNG 이미지 읽기 (순수 Python, Pillow 없음)
   2. pHash 계산 (순수 Python DCT)
-  3. S3 결과 캐시 확인 → HIT이면 바로 반환
-  4. MISS면 이미지 S3 저장 후 origin으로 GET 전달
+  3. 이미지 S3 저장 후 GET /infer?hash=xxx 로 리라이트
+  4. CloudFront가 GET /infer?hash=xxx 기준으로 캐시 체크
+     → HIT: "Hit from cloudfront" 반환
+     → MISS: origin Lambda 추론 후 CloudFront가 캐시 저장
 """
 import base64
 import json
@@ -149,31 +151,22 @@ def lambda_handler(event, context):
     image_hash = canonical_hash(img_bytes)
     print(f"[INFO] hash={image_hash}, size={len(img_bytes)}")
 
-    # ── S3 결과 캐시 확인 ──────────────────────────────────
-    result_key = f"result/{image_hash}.json"
+    # ── 이미지 S3 저장 (없을 때만) ─────────────────────────
     try:
-        obj = s3.get_object(Bucket=S3_BUCKET, Key=result_key)
-        cached = obj['Body'].read().decode('utf-8')
-        print(f"[INFO] Cache HIT: {result_key}")
-        return {
-            'status': '200',
-            'statusDescription': 'OK',
-            'headers': {
-                'content-type': [{'key': 'Content-Type', 'value': 'application/json'}],
-                'x-cache-status': [{'key': 'X-Cache-Status', 'value': 'HIT'}],
-            },
-            'body': cached
-        }
+        s3.head_object(Bucket=S3_BUCKET, Key=image_hash)
+        print(f"[INFO] Image already in S3: {image_hash}")
     except ClientError as e:
-        if e.response['Error']['Code'] != 'NoSuchKey':
-            print(f"[WARN] S3 cache check error: {e}")
-    except Exception as e:
-        print(f"[WARN] S3 cache check error: {e}")
+        if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
+            s3.put_object(Bucket=S3_BUCKET, Key=image_hash, Body=img_bytes, ContentType='image/png')
+            print(f"[INFO] Image uploaded to S3: {image_hash}")
+        else:
+            print(f"[WARN] S3 head_object error: {e}")
+            s3.put_object(Bucket=S3_BUCKET, Key=image_hash, Body=img_bytes, ContentType='image/png')
 
-    # ── Cache MISS: 이미지 저장 후 origin으로 전달 ────────
-    print(f"[INFO] Cache MISS: {result_key}")
-    s3.put_object(Bucket=S3_BUCKET, Key=image_hash, Body=img_bytes, ContentType='image/png')
-
+    # ── POST → GET /infer?hash=xxx 리라이트 ───────────────
+    # CloudFront가 GET /infer?hash=xxx 기준으로 캐시 체크:
+    #   HIT  → "Hit from cloudfront" (origin 호출 없음)
+    #   MISS → origin Lambda 추론 → Cache-Control로 CloudFront 캐시 저장
     request['method'] = 'GET'
     request['uri'] = '/infer'
     request['querystring'] = f'hash={image_hash}'

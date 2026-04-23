@@ -1,10 +1,11 @@
 """
-Lambda@Edge - Viewer Request
+Lambda@Edge - Viewer Request (GET + X-Image-Data header 방식)
 역할:
-  1. POST body에서 PNG 이미지 읽기 (순수 Python, Pillow 없음)
+  1. GET 요청의 X-Image-Data 헤더에서 base64 인코딩된 PNG 이미지 읽기
   2. pHash 계산 (순수 Python DCT)
   3. S3 결과 캐시 확인 → HIT이면 바로 반환
-  4. MISS면 이미지 S3 저장 후 origin으로 GET 전달
+  4. MISS면 이미지 S3 저장 후 X-Image-Data 헤더 제거, ?hash=xxx 추가하여 origin으로 전달
+  5. X-Image-Data 없는 GET은 그대로 통과 (CloudFront 캐시 응답)
 """
 import base64
 import json
@@ -135,16 +136,30 @@ def canonical_hash(img_bytes):
 def lambda_handler(event, context):
     request = event['Records'][0]['cf']['request']
 
-    if request['method'] != 'POST':
+    # GET 요청이 아니거나 X-Image-Data 헤더가 없으면 그대로 통과
+    # (CloudFront가 캐시된 응답을 반환하는 경우)
+    if request['method'] != 'GET':
         return request
 
-    body_obj = request.get('body', {})
-    if not body_obj or not body_obj.get('data'):
+    headers = request.get('headers', {})
+    image_data_header = headers.get('x-image-data', [])
+    if not image_data_header:
         return request
 
-    raw = body_obj['data']
-    img_bytes = base64.b64decode(raw) if body_obj.get('encoding') == 'base64' \
-        else (raw.encode('latin-1') if isinstance(raw, str) else raw)
+    # X-Image-Data 헤더에서 base64 인코딩된 이미지 추출
+    raw_b64 = image_data_header[0]['value']
+    try:
+        img_bytes = base64.b64decode(raw_b64)
+    except Exception as e:
+        print(f"[ERROR] base64 decode failed: {e}")
+        return {
+            'status': '400',
+            'statusDescription': 'Bad Request',
+            'headers': {
+                'content-type': [{'key': 'Content-Type', 'value': 'application/json'}],
+            },
+            'body': json.dumps({'error': 'Invalid base64 in X-Image-Data header'})
+        }
 
     image_hash = canonical_hash(img_bytes)
     print(f"[INFO] hash={image_hash}, size={len(img_bytes)}")
@@ -161,6 +176,7 @@ def lambda_handler(event, context):
             'headers': {
                 'content-type': [{'key': 'Content-Type', 'value': 'application/json'}],
                 'x-cache-status': [{'key': 'X-Cache-Status', 'value': 'HIT'}],
+                'cache-control': [{'key': 'Cache-Control', 'value': 'max-age=86400, public'}],
             },
             'body': cached
         }
@@ -170,12 +186,16 @@ def lambda_handler(event, context):
     except Exception as e:
         print(f"[WARN] S3 cache check error: {e}")
 
-    # ── Cache MISS: 이미지 저장 후 origin으로 전달 ────────
+    # ── Cache MISS: 이미지 S3 저장 후 origin으로 전달 ────────
     print(f"[INFO] Cache MISS: {result_key}")
     s3.put_object(Bucket=S3_BUCKET, Key=image_hash, Body=img_bytes, ContentType='image/png')
 
-    request['method'] = 'GET'
+    # X-Image-Data 헤더 제거 (origin Lambda는 S3에서 이미지를 읽음)
+    headers.pop('x-image-data', None)
+    request['headers'] = headers
+
+    # /infer?hash=xxx 로 라우팅
     request['uri'] = '/infer'
     request['querystring'] = f'hash={image_hash}'
-    request.pop('body', None)
+
     return request

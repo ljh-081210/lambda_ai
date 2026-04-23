@@ -1,12 +1,12 @@
 """
 Lambda@Edge - Viewer Request
 역할:
-  1. POST body에서 PNG 이미지 읽기 (순수 Python, Pillow 없음)
-  2. pHash 계산 (순수 Python DCT)
-  3. 이미지 S3 저장 후 GET /infer?hash=xxx 로 리라이트
-  4. CloudFront가 GET /infer?hash=xxx 기준으로 캐시 체크
-     → HIT: "Hit from cloudfront" 반환
-     → MISS: origin Lambda 추론 후 CloudFront가 캐시 저장
+  1. GET /infer?image=<name> 요청에서 image 파라미터 추출
+  2. S3 examples/<name>.png 에서 이미지 로드
+  3. 회전 불변 pHash 계산 (rotate 파라미터 무관하게 동일 hash)
+  4. /infer?hash=xxx 로 리라이트
+  5. CloudFront가 hash 기준으로 네이티브 캐시
+     → ?image=dog 와 ?image=dog&rotate=90 모두 동일 hash → Cache HIT
 """
 import base64
 import json
@@ -133,42 +133,74 @@ def canonical_hash(img_bytes):
     return format(min(hashes), '016x')
 
 
+# ── 쿼리스트링 파싱 ──────────────────────────────────────
+def parse_qs(qs):
+    params = {}
+    for kv in (qs or '').split('&'):
+        if '=' in kv:
+            k, v = kv.split('=', 1)
+            params[k.strip()] = v.strip()
+    return params
+
+
 # ── Lambda 핸들러 ────────────────────────────────────────
 def lambda_handler(event, context):
     request = event['Records'][0]['cf']['request']
 
-    if request['method'] != 'POST':
+    if request['method'] != 'GET':
         return request
 
-    body_obj = request.get('body', {})
-    if not body_obj or not body_obj.get('data'):
+    params = parse_qs(request.get('querystring', ''))
+    image_name = params.get('image')
+
+    # image 파라미터 없으면 그대로 통과
+    # (CloudFront가 캐시된 /infer?hash=xxx 응답을 반환하는 경우)
+    if not image_name:
         return request
 
-    raw = body_obj['data']
-    img_bytes = base64.b64decode(raw) if body_obj.get('encoding') == 'base64' \
-        else (raw.encode('latin-1') if isinstance(raw, str) else raw)
+    # ── S3에서 예시 이미지 로드 ───────────────────────────
+    # S3 경로: examples/<name>.png
+    s3_key = f'examples/{image_name}.png'
+    try:
+        obj = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
+        img_bytes = obj['Body'].read()
+        print(f"[INFO] Loaded image from S3: {s3_key} ({len(img_bytes)} bytes)")
+    except ClientError as e:
+        print(f"[ERROR] Image not found in S3: {s3_key} - {e}")
+        return {
+            'status': '404',
+            'statusDescription': 'Not Found',
+            'headers': {
+                'content-type': [{'key': 'Content-Type', 'value': 'application/json'}],
+            },
+            'body': json.dumps({'error': f'Image not found: {image_name}'})
+        }
 
+    # ── 회전 불변 pHash 계산 ──────────────────────────────
+    # canonical_hash는 0/90/180/270도 중 최솟값 사용
+    # → ?rotate=90 파라미터가 있어도 동일한 hash 반환
     image_hash = canonical_hash(img_bytes)
-    print(f"[INFO] hash={image_hash}, size={len(img_bytes)}")
+    rotate = params.get('rotate', '0')
+    print(f"[INFO] image={image_name}, rotate={rotate}, hash={image_hash}")
 
-    # ── 이미지 S3 저장 (없을 때만) ─────────────────────────
+    # ── origin Lambda용 이미지 S3 저장 (없을 때만) ────────
     try:
         s3.head_object(Bucket=S3_BUCKET, Key=image_hash)
-        print(f"[INFO] Image already in S3: {image_hash}")
+        print(f"[INFO] Image already cached in S3: {image_hash}")
     except ClientError as e:
         if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
-            s3.put_object(Bucket=S3_BUCKET, Key=image_hash, Body=img_bytes, ContentType='image/png')
-            print(f"[INFO] Image uploaded to S3: {image_hash}")
+            s3.put_object(Bucket=S3_BUCKET, Key=image_hash,
+                          Body=img_bytes, ContentType='image/png')
+            print(f"[INFO] Image saved to S3: {image_hash}")
         else:
             print(f"[WARN] S3 head_object error: {e}")
-            s3.put_object(Bucket=S3_BUCKET, Key=image_hash, Body=img_bytes, ContentType='image/png')
 
-    # ── POST → GET /infer?hash=xxx 리라이트 ───────────────
-    # CloudFront가 GET /infer?hash=xxx 기준으로 캐시 체크:
-    #   HIT  → "Hit from cloudfront" (origin 호출 없음)
-    #   MISS → origin Lambda 추론 → Cache-Control로 CloudFront 캐시 저장
-    request['method'] = 'GET'
+    # ── /infer?hash=xxx 로 리라이트 ───────────────────────
+    # CloudFront가 hash 기준으로 캐시:
+    #   ?image=dog           → hash=abc → Miss (첫 요청) → 추론 후 캐시
+    #   ?image=dog           → hash=abc → Hit from cloudfront ✅
+    #   ?image=dog&rotate=90 → hash=abc (동일!) → Hit from cloudfront ✅
     request['uri'] = '/infer'
     request['querystring'] = f'hash={image_hash}'
-    request.pop('body', None)
+
     return request

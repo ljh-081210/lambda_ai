@@ -85,12 +85,14 @@ def lambda_handler(event, context):
     # 추론 결과 S3에 캐시 저장 (Lambda@Edge가 다음 요청에서 바로 반환)
     try:
         result_key = f"result/{image_hash}.json"
+        print(f"[INFO] S3 cache write start: bucket={S3_BUCKET} key={result_key}")
         s3_client.put_object(
             Bucket=S3_BUCKET,
             Key=result_key,
             Body=json.dumps(result, ensure_ascii=False),
             ContentType='application/json'
         )
+        print(f"[INFO] S3 cache write success: {result_key}")
     except Exception as e:
         print(f"[WARN] S3 cache write failed: {e}")
 

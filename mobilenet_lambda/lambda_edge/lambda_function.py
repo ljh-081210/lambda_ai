@@ -199,6 +199,7 @@ def lambda_handler(event, context):
     # rotate는 캐시 키에 포함하지 않음 → 모든 각도가 같은 캐시 공유
     # Viewer Response Lambda@Edge가 X-Rotate 읽어서 이미지 회전 후 반환
     rotate = params.get('rotate', '0')
+    headers = request.get('headers', {})
     headers['x-rotate'] = [{'key': 'X-Rotate', 'value': rotate}]
     request['headers'] = headers
     request['uri'] = '/infer'

@@ -3,9 +3,12 @@ Lambda@Edge - Viewer Request (GET + X-Image-Data header 방식)
 역할:
   1. GET 요청의 X-Image-Data 헤더에서 base64 인코딩된 PNG 이미지 읽기
   2. pHash 계산 (순수 Python DCT)
-  3. S3 결과 캐시 확인 → HIT이면 바로 반환
-  4. MISS면 이미지 S3 저장 후 X-Image-Data 헤더 제거, ?hash=xxx 추가하여 origin으로 전달
-  5. X-Image-Data 없는 GET은 그대로 통과 (CloudFront 캐시 응답)
+  3. 이미지를 S3에 저장 (없을 때만)
+  4. X-Image-Data 헤더 제거 후 /infer?hash=xxx 로 리라이트
+  5. CloudFront가 /infer?hash=xxx 기준으로 캐시 체크
+     → HIT: "Hit from cloudfront" 반환
+     → MISS: origin Lambda 추론 후 CloudFront가 캐시 저장
+  6. X-Image-Data 없는 GET은 그대로 통과
 """
 import base64
 import json
@@ -137,7 +140,7 @@ def lambda_handler(event, context):
     request = event['Records'][0]['cf']['request']
 
     # GET 요청이 아니거나 X-Image-Data 헤더가 없으면 그대로 통과
-    # (CloudFront가 캐시된 응답을 반환하는 경우)
+    # (CloudFront가 캐시 HIT 응답을 반환하는 경우 등)
     if request['method'] != 'GET':
         return request
 
@@ -164,37 +167,25 @@ def lambda_handler(event, context):
     image_hash = canonical_hash(img_bytes)
     print(f"[INFO] hash={image_hash}, size={len(img_bytes)}")
 
-    # ── S3 결과 캐시 확인 ──────────────────────────────────
-    result_key = f"result/{image_hash}.json"
+    # ── 이미지 S3 저장 (없을 때만) ─────────────────────────
+    # origin Lambda가 추론 시 S3에서 이미지를 읽으므로 미리 저장
     try:
-        obj = s3.get_object(Bucket=S3_BUCKET, Key=result_key)
-        cached = obj['Body'].read().decode('utf-8')
-        print(f"[INFO] Cache HIT: {result_key}")
-        return {
-            'status': '200',
-            'statusDescription': 'OK',
-            'headers': {
-                'content-type': [{'key': 'Content-Type', 'value': 'application/json'}],
-                'x-cache-status': [{'key': 'X-Cache-Status', 'value': 'HIT'}],
-                'cache-control': [{'key': 'Cache-Control', 'value': 'max-age=86400, public'}],
-            },
-            'body': cached
-        }
+        s3.head_object(Bucket=S3_BUCKET, Key=image_hash)
+        print(f"[INFO] Image already in S3: {image_hash}")
     except ClientError as e:
-        if e.response['Error']['Code'] != 'NoSuchKey':
-            print(f"[WARN] S3 cache check error: {e}")
-    except Exception as e:
-        print(f"[WARN] S3 cache check error: {e}")
+        if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
+            s3.put_object(Bucket=S3_BUCKET, Key=image_hash, Body=img_bytes, ContentType='image/png')
+            print(f"[INFO] Image uploaded to S3: {image_hash}")
+        else:
+            print(f"[WARN] S3 head_object error: {e}")
+            s3.put_object(Bucket=S3_BUCKET, Key=image_hash, Body=img_bytes, ContentType='image/png')
 
-    # ── Cache MISS: 이미지 S3 저장 후 origin으로 전달 ────────
-    print(f"[INFO] Cache MISS: {result_key}")
-    s3.put_object(Bucket=S3_BUCKET, Key=image_hash, Body=img_bytes, ContentType='image/png')
-
-    # X-Image-Data 헤더 제거 (origin Lambda는 S3에서 이미지를 읽음)
+    # ── X-Image-Data 헤더 제거 후 /infer?hash=xxx 로 리라이트 ──
+    # CloudFront가 /infer?hash=xxx 기준으로 캐시 체크:
+    #   HIT  → "Hit from cloudfront" (origin 호출 없음)
+    #   MISS → origin Lambda 추론 → Cache-Control로 CloudFront 캐시 저장
     headers.pop('x-image-data', None)
     request['headers'] = headers
-
-    # /infer?hash=xxx 로 라우팅
     request['uri'] = '/infer'
     request['querystring'] = f'hash={image_hash}'
 

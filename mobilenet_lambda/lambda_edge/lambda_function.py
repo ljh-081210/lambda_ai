@@ -195,11 +195,12 @@ def lambda_handler(event, context):
         else:
             print(f"[WARN] S3 head_object error: {e}")
 
-    # ── /infer?hash=xxx 로 리라이트 ───────────────────────
-    # CloudFront가 hash 기준으로 캐시:
-    #   ?image=dog           → hash=abc → Miss (첫 요청) → 추론 후 캐시
-    #   ?image=dog           → hash=abc → Hit from cloudfront ✅
-    #   ?image=dog&rotate=90 → hash=abc (동일!) → Hit from cloudfront ✅
+    # ── X-Rotate 헤더 추가 후 /infer?hash=xxx 로 리라이트 ──
+    # rotate는 캐시 키에 포함하지 않음 → 모든 각도가 같은 캐시 공유
+    # Viewer Response Lambda@Edge가 X-Rotate 읽어서 이미지 회전 후 반환
+    rotate = params.get('rotate', '0')
+    headers['x-rotate'] = [{'key': 'X-Rotate', 'value': rotate}]
+    request['headers'] = headers
     request['uri'] = '/infer'
     request['querystring'] = f'hash={image_hash}'
 

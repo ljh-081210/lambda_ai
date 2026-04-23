@@ -6,6 +6,7 @@ os.environ.setdefault('KERAS_HOME', '/var/task/.keras')
 cold_start_begin = time.perf_counter()
 
 import json
+import base64
 import numpy as np
 import boto3
 from PIL import Image
@@ -74,9 +75,21 @@ def lambda_handler(event, context):
         for i, (cls_id, lbl, score) in enumerate(top5)
     ]
 
+    # 원본 이미지 base64 인코딩 (Viewer Response에서 회전에 사용)
+    try:
+        buf = io.BytesIO()
+        thumb = img.convert('RGB')
+        thumb.thumbnail((256, 256))
+        thumb.save(buf, format='PNG')
+        image_b64 = base64.b64encode(buf.getvalue()).decode()
+    except Exception as e:
+        print(f"[WARN] image encoding failed: {e}")
+        image_b64 = ''
+
     result = {
         'hash': image_hash,
         'predictions': predictions,
+        'image_base64': image_b64,
         'cold_start_time_s': round(cold_start_time, 4),
         'inference_time_s': round(inference_end - inference_start, 4),
         'execution_time_s': round(time.perf_counter() - execution_start, 4),

@@ -52,19 +52,6 @@ def lambda_handler(event, context):
     if not image_hash:
         return build_response(400, {'error': 'hash parameter required'})
 
-    # ── S3 캐시 먼저 확인 ─────────────────────────────────
-    cache_key = f'cache/{image_hash}.json'
-    try:
-        obj = s3_client.get_object(Bucket=S3_BUCKET, Key=cache_key)
-        cached_result = json.loads(obj['Body'].read().decode('utf-8'))
-        cached_result['cached'] = True
-        print(f"[INFO] Cache HIT: {cache_key}")
-        return build_response(200, cached_result, cache=True)
-    except s3_client.exceptions.NoSuchKey:
-        pass
-    except Exception as e:
-        print(f"[INFO] Cache MISS: {e}")
-
     # ── S3에서 이미지 로드 ────────────────────────────────
     s3_key = f'images/{image_name}.png'
     try:
@@ -92,23 +79,9 @@ def lambda_handler(event, context):
         'hash': image_hash,
         'image': f'{image_name}.png',
         'predictions': predictions,
-        'cached': False,
         'cold_start_time_s': round(cold_start_time, 4),
         'inference_time_s': round(inference_end - inference_start, 4),
         'execution_time_s': round(time.perf_counter() - execution_start, 4),
     }
-
-    # ── 추론 결과 S3 캐시 저장 ────────────────────────────
-    try:
-        print(f"[INFO] Cache write: {cache_key}")
-        s3_client.put_object(
-            Bucket=S3_BUCKET,
-            Key=cache_key,
-            Body=json.dumps(result, ensure_ascii=False),
-            ContentType='application/json'
-        )
-        print(f"[INFO] Cache write success: {cache_key}")
-    except Exception as e:
-        print(f"[WARN] Cache write failed: {e}")
 
     return build_response(200, result, cache=True)

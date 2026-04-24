@@ -2,9 +2,9 @@
 Lambda@Edge - Viewer Request
 역할:
   1. GET /infer?image=<name> 요청에서 image 파라미터 추출
-  2. S3 examples/<name>.png 에서 이미지 로드
+  2. S3 images/<name>.png 에서 이미지 로드
   3. 회전 불변 pHash 계산 (rotate 파라미터 무관하게 동일 hash)
-  4. /infer?hash=xxx 로 리라이트
+  4. /infer?hash=xxx&image=<name> 로 리라이트
   5. CloudFront가 hash 기준으로 네이티브 캐시
      → ?image=dog 와 ?image=dog&rotate=90 모두 동일 hash → Cache HIT
 """
@@ -16,8 +16,8 @@ import zlib
 import boto3
 from botocore.exceptions import ClientError
 
-S3_BUCKET = 'lambda-ai-ljh'
-s3 = boto3.client('s3', region_name='ap-northeast-2')
+S3_BUCKET = 'gj2026-cdnv2-bucket'
+s3 = boto3.client('s3', region_name='us-east-1')
 
 # DCT cos 테이블 미리 계산
 _N = 32
@@ -154,13 +154,11 @@ def lambda_handler(event, context):
     image_name = params.get('image')
 
     # image 파라미터 없으면 그대로 통과
-    # (CloudFront가 캐시된 /infer?hash=xxx 응답을 반환하는 경우)
     if not image_name:
         return request
 
-    # ── S3에서 예시 이미지 로드 ───────────────────────────
-    # S3 경로: examples/<name>.png
-    s3_key = f'example/{image_name}.png'
+    # ── S3에서 이미지 로드 ────────────────────────────────
+    s3_key = f'images/{image_name}.png'
     try:
         obj = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
         img_bytes = obj['Body'].read()
@@ -177,32 +175,12 @@ def lambda_handler(event, context):
         }
 
     # ── 회전 불변 pHash 계산 ──────────────────────────────
-    # canonical_hash는 0/90/180/270도 중 최솟값 사용
-    # → ?rotate=90 파라미터가 있어도 동일한 hash 반환
     image_hash = canonical_hash(img_bytes)
     rotate = params.get('rotate', '0')
     print(f"[INFO] image={image_name}, rotate={rotate}, hash={image_hash}")
 
-    # ── origin Lambda용 이미지 S3 저장 (없을 때만) ────────
-    try:
-        s3.head_object(Bucket=S3_BUCKET, Key=image_hash)
-        print(f"[INFO] Image already cached in S3: {image_hash}")
-    except ClientError as e:
-        if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
-            s3.put_object(Bucket=S3_BUCKET, Key=image_hash,
-                          Body=img_bytes, ContentType='image/png')
-            print(f"[INFO] Image saved to S3: {image_hash}")
-        else:
-            print(f"[WARN] S3 head_object error: {e}")
-
-    # ── X-Rotate 헤더 추가 후 /infer?hash=xxx 로 리라이트 ──
-    # rotate는 캐시 키에 포함하지 않음 → 모든 각도가 같은 캐시 공유
-    # Viewer Response Lambda@Edge가 X-Rotate 읽어서 이미지 회전 후 반환
-    rotate = params.get('rotate', '0')
-    headers = request.get('headers', {})
-    headers['x-rotate'] = [{'key': 'X-Rotate', 'value': rotate}]
-    request['headers'] = headers
+    # ── /infer?hash=xxx&image=<name> 로 리라이트 ──────────
     request['uri'] = '/infer'
-    request['querystring'] = f'hash={image_hash}'
+    request['querystring'] = f'hash={image_hash}&image={image_name}'
 
     return request

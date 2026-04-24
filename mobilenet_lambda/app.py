@@ -45,21 +45,35 @@ def build_response(status_code: int, body: dict, cache: bool = False) -> dict:
 def lambda_handler(event, context):
     execution_start = time.perf_counter()
 
-    # query string에서 hash 추출
     params = event.get('queryStringParameters') or {}
     image_hash = params.get('hash')
+    image_name = params.get('image', '')
 
     if not image_hash:
         return build_response(400, {'error': 'hash parameter required'})
 
-    # S3에서 이미지 가져오기
+    # ── S3 캐시 먼저 확인 ─────────────────────────────────
+    cache_key = f'cache/{image_hash}.json'
     try:
-        obj = s3_client.get_object(Bucket=S3_BUCKET, Key=image_hash)
+        obj = s3_client.get_object(Bucket=S3_BUCKET, Key=cache_key)
+        cached_result = json.loads(obj['Body'].read().decode('utf-8'))
+        cached_result['cached'] = True
+        print(f"[INFO] Cache HIT: {cache_key}")
+        return build_response(200, cached_result, cache=True)
+    except s3_client.exceptions.NoSuchKey:
+        pass
+    except Exception as e:
+        print(f"[INFO] Cache MISS: {e}")
+
+    # ── S3에서 이미지 로드 ────────────────────────────────
+    s3_key = f'images/{image_name}.png'
+    try:
+        obj = s3_client.get_object(Bucket=S3_BUCKET, Key=s3_key)
         img = Image.open(BytesIO(obj['Body'].read()))
     except Exception as e:
         return build_response(404, {'error': f'Image not found in S3: {e}'})
 
-    # AI 추론
+    # ── AI 추론 ───────────────────────────────────────────
     try:
         data = preprocess_for_inference(img)
         inference_start = time.perf_counter()
@@ -70,30 +84,31 @@ def lambda_handler(event, context):
 
     top5 = decode_predictions(preds, top=5)[0]
     predictions = [
-        {'rank': i + 1, 'class_id': cls_id, 'label': lbl, 'score': round(float(score), 6)}
-        for i, (cls_id, lbl, score) in enumerate(top5)
+        {'class': lbl, 'probability': round(float(score), 6)}
+        for _, lbl, score in top5
     ]
 
     result = {
         'hash': image_hash,
+        'image': f'{image_name}.png',
         'predictions': predictions,
+        'cached': False,
         'cold_start_time_s': round(cold_start_time, 4),
         'inference_time_s': round(inference_end - inference_start, 4),
         'execution_time_s': round(time.perf_counter() - execution_start, 4),
     }
 
-    # 추론 결과 S3에 캐시 저장 (Lambda@Edge가 다음 요청에서 바로 반환)
+    # ── 추론 결과 S3 캐시 저장 ────────────────────────────
     try:
-        result_key = f"result/{image_hash}.json"
-        print(f"[INFO] S3 cache write start: bucket={S3_BUCKET} key={result_key}")
+        print(f"[INFO] Cache write: {cache_key}")
         s3_client.put_object(
             Bucket=S3_BUCKET,
-            Key=result_key,
+            Key=cache_key,
             Body=json.dumps(result, ensure_ascii=False),
             ContentType='application/json'
         )
-        print(f"[INFO] S3 cache write success: {result_key}")
+        print(f"[INFO] Cache write success: {cache_key}")
     except Exception as e:
-        print(f"[WARN] S3 cache write failed: {e}")
+        print(f"[WARN] Cache write failed: {e}")
 
     return build_response(200, result, cache=True)

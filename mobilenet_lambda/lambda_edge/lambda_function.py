@@ -183,8 +183,10 @@ def lambda_handler(event, context):
     headers['x-rotate'] = [{'key': 'X-Rotate', 'value': rotate}]
     request['headers'] = headers
 
-    # /infer?hash=xxx&image=<name> 로 리라이트
+    # /infer?hash=xxx&image=<name>&rotate=<rotate> 로 리라이트
+    # rotate는 캐시 키에 미포함 → 모든 각도가 동일 캐시 공유
+    # Viewer Response Lambda가 rotate 읽어서 이미지 회전 후 반환
     request['uri'] = '/infer'
-    request['querystring'] = f'hash={image_hash}&image={image_name}'
+    request['querystring'] = f'hash={image_hash}&image={image_name}&rotate={rotate}'
 
     return request

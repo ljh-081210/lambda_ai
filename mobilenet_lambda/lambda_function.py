@@ -2,6 +2,8 @@ import os
 import json
 import base64
 import boto3
+from PIL import Image
+from io import BytesIO
 
 S3_BUCKET = os.environ.get('S3_BUCKET', '')
 s3_client = boto3.client('s3')
@@ -11,6 +13,7 @@ def lambda_handler(event, context):
     params = event.get('queryStringParameters') or {}
     image_hash = params.get('hash')
     image_name = params.get('image', '')
+    rotate = int(params.get('rotate', '0'))
 
     if not image_hash:
         return {
@@ -30,6 +33,18 @@ def lambda_handler(event, context):
             'headers': {'Content-Type': 'application/json'},
             'body': json.dumps({'error': f'Image not found: {e}'})
         }
+
+    # 이미지 회전 (rotate != 0 인 경우)
+    if rotate != 0:
+        try:
+            img = Image.open(BytesIO(img_bytes))
+            img = img.rotate(-rotate, expand=True)
+            buf = BytesIO()
+            img.save(buf, format='PNG')
+            img_bytes = buf.getvalue()
+            print(f"[INFO] Rotated {rotate}° → {img.size}")
+        except Exception as e:
+            print(f"[WARN] Rotation failed: {e}")
 
     return {
         'statusCode': 200,

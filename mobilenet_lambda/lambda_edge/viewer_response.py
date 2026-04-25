@@ -1,18 +1,12 @@
 """
 Lambda@Edge - Viewer Response
 역할:
-  1. 캐시된 응답 JSON에서 image_base64 추출
+  1. 캐시된 응답(image/png)을 가져옴
   2. 요청의 X-Rotate 헤더로 회전 각도 확인
   3. 순수 Python으로 이미지 회전
-  4. 회전된 이미지를 응답에 포함하여 반환
-
-흐름:
-  ?image=dog         → hit → Viewer Response: rotate=0  → 원본 이미지
-  ?image=dog&rotate=90 → hit → Viewer Response: rotate=90 → 90도 회전 이미지
-  (추론 결과는 동일, 이미지만 회전)
+  4. 회전된 이미지를 image/png로 반환 (브라우저에서 바로 표시)
 """
 import base64
-import json
 import struct
 import zlib
 
@@ -73,14 +67,14 @@ def decode_png_rgb(data):
         prev = row
 
         for x in range(width):
-            if color_type == 0:    # Grayscale
+            if color_type == 0:
                 g = row[x]
                 pixels.append((g, g, g))
-            elif color_type == 2:  # RGB
+            elif color_type == 2:
                 pixels.append((row[x*3], row[x*3+1], row[x*3+2]))
-            elif color_type == 4:  # Grayscale+Alpha
+            elif color_type == 4:
                 pixels.append((row[x*2], row[x*2], row[x*2]))
-            elif color_type == 6:  # RGBA
+            elif color_type == 6:
                 pixels.append((row[x*4], row[x*4+1], row[x*4+2]))
             else:
                 pixels.append((row[x*ch], row[x*ch], row[x*ch]))
@@ -93,7 +87,7 @@ def encode_png_rgb(pixels, width, height):
     """[(r,g,b), ...] → PNG bytes"""
     raw = bytearray()
     for y in range(height):
-        raw.append(0)  # filter: None
+        raw.append(0)
         for x in range(width):
             r, g, b = pixels[y * width + x]
             raw.extend([r, g, b])
@@ -104,7 +98,7 @@ def encode_png_rgb(pixels, width, height):
         crc = zlib.crc32(tag + data) & 0xFFFFFFFF
         return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', crc)
 
-    ihdr = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)  # 8-bit RGB
+    ihdr = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
 
     return (b'\x89PNG\r\n\x1a\n' +
             make_chunk(b'IHDR', ihdr) +
@@ -146,27 +140,20 @@ def lambda_handler(event, context):
     if rotate == 0:
         return response
 
-    # 응답 body 파싱
     body = response.get('body', '')
     if not body:
         return response
 
     try:
-        data = json.loads(body)
-        image_b64 = data.get('image_base64', '')
-        if not image_b64:
-            return response
-
-        # base64 → PNG → 픽셀 → 회전 → PNG → base64
-        img_bytes = base64.b64decode(image_b64)
+        # base64 디코딩 → PNG → 픽셀 → 회전 → PNG → base64
+        img_bytes = base64.b64decode(body)
         w, h, pixels = decode_png_rgb(img_bytes)
         rotated, new_w, new_h = rotate_pixels(pixels, w, h, rotate)
         rotated_png = encode_png_rgb(rotated, new_w, new_h)
 
-        data['image_base64'] = base64.b64encode(rotated_png).decode()
-        data['rotate'] = rotate
-
-        response['body'] = json.dumps(data, ensure_ascii=False)
+        response['body'] = base64.b64encode(rotated_png).decode()
+        response['bodyEncoding'] = 'base64'
+        response['headers']['content-type'] = [{'key': 'Content-Type', 'value': 'image/png'}]
         print(f"[INFO] Rotated {rotate}° ({w}x{h} → {new_w}x{new_h})")
 
     except Exception as e:

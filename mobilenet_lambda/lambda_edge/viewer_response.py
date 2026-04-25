@@ -141,12 +141,19 @@ def lambda_handler(event, context):
         return response
 
     body = response.get('body', '')
+    body_encoding = response.get('bodyEncoding', 'text')
+    print(f"[INFO] rotate={rotate}, bodyEncoding={body_encoding}, body_len={len(body)}")
+
     if not body:
+        print("[WARN] body is empty")
         return response
 
     try:
-        # base64 디코딩 → PNG → 픽셀 → 회전 → PNG → base64
-        img_bytes = base64.b64decode(body)
+        # bodyEncoding에 따라 디코딩
+        if body_encoding == 'base64':
+            img_bytes = base64.b64decode(body)
+        else:
+            img_bytes = body.encode('iso-8859-1')
         w, h, pixels = decode_png_rgb(img_bytes)
         rotated, new_w, new_h = rotate_pixels(pixels, w, h, rotate)
         rotated_png = encode_png_rgb(rotated, new_w, new_h)

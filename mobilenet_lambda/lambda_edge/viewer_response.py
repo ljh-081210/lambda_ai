@@ -132,10 +132,16 @@ def lambda_handler(event, context):
     request = cf['request']
     response = cf['response']
 
-    # X-Rotate 헤더에서 회전 각도 추출
-    req_headers = request.get('headers', {})
-    rotate_header = req_headers.get('x-rotate', [])
-    rotate = int(rotate_header[0]['value']) if rotate_header else 0
+    # 원본 쿼리스트링에서 rotate 파라미터 추출
+    qs = request.get('querystring', '')
+    rotate = 0
+    for kv in qs.split('&'):
+        if kv.startswith('rotate='):
+            try:
+                rotate = int(kv.split('=', 1)[1]) % 360
+            except ValueError:
+                rotate = 0
+    print(f"[INFO] rotate={rotate} from querystring={qs}")
 
     if rotate == 0:
         return response

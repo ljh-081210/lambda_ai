@@ -4,11 +4,11 @@ Lambda@Edge - Viewer Request
   1. GET /infer?image=<name> 요청에서 image 파라미터 추출
   2. S3 images/<name>.png 에서 이미지 로드
   3. 회전 불변 pHash 계산 (rotate 파라미터 무관하게 동일 hash)
-  4. /infer?hash=xxx&image=<name> 로 리라이트
+  4. X-Rotate 헤더 추가 후 /infer?hash=xxx&image=<name> 로 리라이트
   5. CloudFront가 hash 기준으로 네이티브 캐시
      → ?image=dog 와 ?image=dog&rotate=90 모두 동일 hash → Cache HIT
+     → Viewer Response Lambda가 X-Rotate 읽어서 이미지 회전 후 반환
 """
-import base64
 import json
 import math
 import struct
@@ -16,7 +16,7 @@ import zlib
 import boto3
 from botocore.exceptions import ClientError
 
-S3_BUCKET = 'gj2026-cdnv2-bucket'
+S3_BUCKET = 'gj2026-cdn-bucket'
 s3 = boto3.client('s3', region_name='us-east-1')
 
 # DCT cos 테이블 미리 계산
@@ -153,11 +153,10 @@ def lambda_handler(event, context):
     params = parse_qs(request.get('querystring', ''))
     image_name = params.get('image')
 
-    # image 파라미터 없으면 그대로 통과
     if not image_name:
         return request
 
-    # ── S3에서 이미지 로드 ────────────────────────────────
+    # S3에서 이미지 로드
     s3_key = f'images/{image_name}.png'
     try:
         obj = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
@@ -174,12 +173,17 @@ def lambda_handler(event, context):
             'body': json.dumps({'error': f'Image not found: {image_name}'})
         }
 
-    # ── 회전 불변 pHash 계산 ──────────────────────────────
+    # 회전 불변 pHash 계산
     image_hash = canonical_hash(img_bytes)
     rotate = params.get('rotate', '0')
     print(f"[INFO] image={image_name}, rotate={rotate}, hash={image_hash}")
 
-    # ── /infer?hash=xxx&image=<name> 로 리라이트 ──────────
+    # X-Rotate 헤더 추가
+    headers = request.get('headers', {})
+    headers['x-rotate'] = [{'key': 'X-Rotate', 'value': rotate}]
+    request['headers'] = headers
+
+    # /infer?hash=xxx&image=<name> 로 리라이트
     request['uri'] = '/infer'
     request['querystring'] = f'hash={image_hash}&image={image_name}'
 

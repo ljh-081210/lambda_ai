@@ -181,8 +181,8 @@ def lambda_handler(event, context):
     # cache_key = hash_rotate → 회전별로 캐시 분리
     cache_key = f'{image_hash}_{rotate}'
 
-    # /infer?hash=<cache_key>&image=<name>&rotate=<rotate> 로 리라이트
-    request['uri'] = '/infer'
+    # /image?hash=<cache_key>&image=<name>&rotate=<rotate> 로 리라이트
+    request['uri'] = '/image'
     request['querystring'] = f'hash={cache_key}&image={image_name}&rotate={rotate}'
 
     return request

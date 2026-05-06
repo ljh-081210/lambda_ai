@@ -172,11 +172,20 @@ def lambda_handler(event, context):
         w, h, pixels = decode_png_rgb(img_bytes)
         rotated, new_w, new_h = rotate_pixels(pixels, w, h, rotate)
         rotated_png = encode_png_rgb(rotated, new_w, new_h)
-
-        response['body'] = base64.b64encode(rotated_png).decode()
-        response['bodyEncoding'] = 'base64'
-        response['headers']['content-type'] = [{'key': 'Content-Type', 'value': 'image/png'}]
         print(f"[INFO] Rotated {rotate}° ({w}x{h} → {new_w}x{new_h}), size={len(rotated_png)} bytes")
+
+        # 기존 response 수정 대신 새 객체 반환
+        # → content-length read-only 제약 우회 (원본 크기 불일치 문제 해결)
+        return {
+            'status': '200',
+            'statusDescription': 'OK',
+            'headers': {
+                'content-type': [{'key': 'Content-Type', 'value': 'image/png'}],
+                'cache-control': [{'key': 'Cache-Control', 'value': 'max-age=86400, public'}],
+            },
+            'body': base64.b64encode(rotated_png).decode(),
+            'bodyEncoding': 'base64',
+        }
 
     except Exception as e:
         print(f"[WARN] Rotation failed: {e}")

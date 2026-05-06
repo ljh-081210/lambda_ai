@@ -15,36 +15,49 @@ s3 = boto3.client('s3', region_name='ap-northeast-2')
 
 
 def decode_bmp(data):
-    """32-bit BMP → (width, height, [(r,g,b), ...] top-to-bottom)"""
+    """24/32-bit BMP → (width, height, bpp, [(r,g,b), ...] top-to-bottom)"""
     pixel_offset = struct.unpack_from('<I', data, 10)[0]
     width = struct.unpack_from('<i', data, 18)[0]
     height = struct.unpack_from('<i', data, 22)[0]
+    bpp = struct.unpack_from('<H', data, 28)[0]
+    ch = bpp // 8
+    row_stride = (width * ch + 3) & ~3
     bottom_up = height > 0
     abs_height = abs(height)
     rows = []
     for y in range(abs_height):
-        row_start = pixel_offset + y * width * 4
+        row_start = pixel_offset + y * row_stride
         row = []
         for x in range(width):
-            off = row_start + x * 4
+            off = row_start + x * ch
             b, g, r = data[off], data[off+1], data[off+2]
             row.append((r, g, b))
         rows.append(row)
     if bottom_up:
         rows = list(reversed(rows))
-    return width, abs_height, [p for row in rows for p in row]
+    return width, abs_height, bpp, [p for row in rows for p in row]
 
 
-def encode_bmp(pixels, width, height):
-    """(r,g,b) list → 32-bit BMP, 크기 = 54 + width*height*4"""
-    pixel_data_size = width * height * 4
+def encode_bmp(pixels, width, height, bpp=32):
+    """(r,g,b) list → BMP matching original bpp (24 or 32)"""
+    ch = bpp // 8
+    row_stride = (width * ch + 3) & ~3
+    pixel_data_size = height * row_stride
     file_size = 54 + pixel_data_size
     file_header = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
     info_header = struct.pack('<IiiHHIIiiII',
-        40, width, -height, 1, 32, 0, pixel_data_size, 0, 0, 0, 0)
+        40, width, -height, 1, bpp, 0, pixel_data_size, 0, 0, 0, 0)
     pixel_bytes = bytearray()
-    for r, g, b in pixels:
-        pixel_bytes.extend([b, g, r, 255])
+    for i in range(height):
+        row_data = bytearray()
+        for r, g, b in pixels[i * width:(i + 1) * width]:
+            if bpp == 32:
+                row_data.extend([b, g, r, 255])
+            else:
+                row_data.extend([b, g, r])
+        while len(row_data) < row_stride:
+            row_data.append(0)
+        pixel_bytes.extend(row_data)
     return file_header + info_header + bytes(pixel_bytes)
 
 
@@ -95,13 +108,13 @@ def lambda_handler(event, context):
         print(f"[ERROR] S3 fetch failed: {e}")
         return response
 
-    w, h, pixels = decode_bmp(bmp_bytes)
+    w, h, bpp, pixels = decode_bmp(bmp_bytes)
     rotated, new_w, new_h = rotate_pixels(pixels, w, h, rotate)
-    rotated_bmp = encode_bmp(rotated, new_w, new_h)
-    print(f"[INFO] Rotated {rotate}° ({w}x{h}→{new_w}x{new_h}), size={len(rotated_bmp)}")
+    rotated_bmp = encode_bmp(rotated, new_w, new_h, bpp)
+    print(f"[INFO] Rotated {rotate}° ({w}x{h}→{new_w}x{new_h}) bpp={bpp}, size={len(rotated_bmp)}")
 
-    # content-length 변경 불필요: W*H*4 = H*W*4 (회전해도 동일)
     response['body'] = base64.b64encode(rotated_bmp).decode()
     response['bodyEncoding'] = 'base64'
     response['headers']['content-type'] = [{'key': 'Content-Type', 'value': 'image/bmp'}]
+    response['headers']['content-length'] = [{'key': 'Content-Length', 'value': str(len(rotated_bmp))}]
     return response

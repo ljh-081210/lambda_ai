@@ -132,18 +132,21 @@ def canonical_hash(img_bytes):
 
 # ── BMP 디코더 (grayscale for pHash) ────────────────────
 def decode_bmp_gray(data):
-    """32-bit BMP → (width, height, grayscale_pixels_flat)"""
+    """24/32-bit BMP → (width, height, grayscale_pixels_flat)"""
     pixel_offset = struct.unpack_from('<I', data, 10)[0]
     width = struct.unpack_from('<i', data, 18)[0]
     height = struct.unpack_from('<i', data, 22)[0]
+    bpp = struct.unpack_from('<H', data, 28)[0]
+    ch = bpp // 8  # bytes per pixel (3 for 24-bit, 4 for 32-bit)
+    row_stride = (width * ch + 3) & ~3  # pad to 4-byte boundary
     bottom_up = height > 0
     abs_height = abs(height)
     rows = []
     for y in range(abs_height):
-        row_start = pixel_offset + y * width * 4
+        row_start = pixel_offset + y * row_stride
         row = []
         for x in range(width):
-            off = row_start + x * 4
+            off = row_start + x * ch
             b, g, r = data[off], data[off+1], data[off+2]
             row.append((77 * r + 150 * g + 29 * b) >> 8)
         rows.append(row)

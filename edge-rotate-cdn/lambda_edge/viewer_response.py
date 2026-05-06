@@ -1,18 +1,22 @@
 """
 Lambda@Edge - Viewer Response
 역할:
-  1. CloudFront 캐시에서 반환된 원본 이미지(image/png) 수신
-  2. 요청 쿼리스트링의 rotate 파라미터로 회전 각도 확인
+  1. 요청 쿼리스트링에서 image, rotate 파라미터 추출
+  2. S3에서 원본 이미지 직접 로드 (response body 대신 사용)
   3. 순수 Python으로 PNG 디코딩 → 픽셀 회전 → PNG 재인코딩
-  4. 회전된 이미지를 image/png로 반환
+  4. 회전된 이미지를 response body에 주입하여 반환
 
-흐름:
-  Client → CloudFront → [Cache HIT] → Viewer Response (회전 적용) → Client
-  단, Origin Lambda는 원본 이미지만 반환하며 회전을 수행하지 않음
+CloudFront는 binary 응답 body를 viewer-response Lambda에 노출하지 않으므로
+response body 대신 S3에서 직접 이미지를 읽어 회전 처리
 """
 import base64
 import struct
 import zlib
+import boto3
+from botocore.exceptions import ClientError
+
+S3_BUCKET = 'gj2026-cdn-bucket'
+s3 = boto3.client('s3', region_name='ap-northeast-2')
 
 
 # ── PNG 디코더 (RGB) ─────────────────────────────────────
@@ -130,39 +134,41 @@ def rotate_pixels(pixels, w, h, degrees):
     return pixels, w, h
 
 
+# ── 쿼리스트링 파싱 ──────────────────────────────────────
+def parse_qs(qs):
+    params = {}
+    for kv in (qs or '').split('&'):
+        if '=' in kv:
+            k, v = kv.split('=', 1)
+            params[k.strip()] = v.strip()
+    return params
+
+
 # ── Lambda 핸들러 ────────────────────────────────────────
 def lambda_handler(event, context):
     cf = event['Records'][0]['cf']
     request = cf['request']
     response = cf['response']
 
-    qs = request.get('querystring', '')
-    rotate = 0
-    for kv in qs.split('&'):
-        if kv.startswith('rotate='):
-            try:
-                rotate = int(kv.split('=', 1)[1]) % 360
-            except ValueError:
-                rotate = 0
-    print(f"[INFO] rotate={rotate} from querystring={qs}")
+    params = parse_qs(request.get('querystring', ''))
+    rotate = int(params.get('rotate', '0')) % 360
+    image_name = params.get('image', '')
+    print(f"[INFO] image={image_name}, rotate={rotate}")
 
     if rotate == 0:
         return response
 
-    body = response.get('body', '')
-    body_encoding = response.get('bodyEncoding', 'text')
-    print(f"[INFO] bodyEncoding={body_encoding}, body_len={len(body)}")
-
-    if not body:
-        print("[WARN] body is empty")
+    # S3에서 원본 이미지 직접 로드 (response body 대신)
+    s3_key = f'images/{image_name}.png'
+    try:
+        obj = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
+        img_bytes = obj['Body'].read()
+        print(f"[INFO] Loaded from S3: {s3_key} ({len(img_bytes)} bytes)")
+    except ClientError as e:
+        print(f"[ERROR] S3 fetch failed: {e}")
         return response
 
     try:
-        if body_encoding == 'base64':
-            img_bytes = base64.b64decode(body)
-        else:
-            img_bytes = body.encode('iso-8859-1')
-
         w, h, pixels = decode_png_rgb(img_bytes)
         rotated, new_w, new_h = rotate_pixels(pixels, w, h, rotate)
         rotated_png = encode_png_rgb(rotated, new_w, new_h)

@@ -173,10 +173,10 @@ def lambda_handler(event, context):
     rotate = int(params.get('rotate', '0')) % 360
     print(f"[INFO] image={image_name}, rotate={rotate}, hash={image_hash}")
 
-    # 캐시 키: {hash}_{rotate} → 각도별 개별 캐시 엔트리
+    # 캐시 키: hash + rotate 각각 별도 파라미터
+    # CloudFront cache policy에 hash, rotate 모두 whitelist 등록 필요
     # origin-response에서 회전 처리 (content-length 수정 가능)
-    cache_key = f'{image_hash}_{rotate}'
     request['uri'] = '/image'
-    request['querystring'] = f'hash={cache_key}&image={image_name}&rotate={rotate}'
-    print(f"[INFO] Forwarding to origin: hash={cache_key}")
+    request['querystring'] = f'hash={image_hash}&image={image_name}&rotate={rotate}'
+    print(f"[INFO] Forwarding to origin: hash={image_hash}, rotate={rotate}")
     return request

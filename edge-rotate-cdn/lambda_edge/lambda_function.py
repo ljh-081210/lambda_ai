@@ -18,7 +18,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 S3_BUCKET = 'gj2026-cdn-bucket'
-s3 = boto3.client('s3', region_name='us-east-1')
+s3 = boto3.client('s3', region_name='ap-northeast-2')
 
 _N = 32
 _COS = [[math.cos(math.pi * k * (2 * n + 1) / (2 * _N))
@@ -130,6 +130,39 @@ def canonical_hash(img_bytes):
     return format(min(hashes), '016x')
 
 
+# ── BMP 디코더 (grayscale for pHash) ────────────────────
+def decode_bmp_gray(data):
+    """32-bit BMP → (width, height, grayscale_pixels_flat)"""
+    pixel_offset = struct.unpack_from('<I', data, 10)[0]
+    width = struct.unpack_from('<i', data, 18)[0]
+    height = struct.unpack_from('<i', data, 22)[0]
+    bottom_up = height > 0
+    abs_height = abs(height)
+    rows = []
+    for y in range(abs_height):
+        row_start = pixel_offset + y * width * 4
+        row = []
+        for x in range(width):
+            off = row_start + x * 4
+            b, g, r = data[off], data[off+1], data[off+2]
+            row.append((77 * r + 150 * g + 29 * b) >> 8)
+        rows.append(row)
+    if bottom_up:
+        rows = list(reversed(rows))
+    return width, abs_height, [p for row in rows for p in row]
+
+
+def canonical_hash_bmp(img_bytes):
+    """BMP 기반 회전 불변 pHash"""
+    w, h, pixels = decode_bmp_gray(img_bytes)
+    hashes = []
+    for _ in range(4):
+        resized = resize_nn(pixels, w, h)
+        hashes.append(phash(resized))
+        pixels, w, h = rotate90(pixels, w, h)
+    return format(min(hashes), '016x')
+
+
 # ── 쿼리스트링 파싱 ──────────────────────────────────────
 def parse_qs(qs):
     params = {}
@@ -153,7 +186,7 @@ def lambda_handler(event, context):
     if not image_name:
         return request
 
-    s3_key = f'images/{image_name}.png'
+    s3_key = f'images/{image_name}.bmp'
     try:
         obj = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
         img_bytes = obj['Body'].read()
@@ -169,7 +202,7 @@ def lambda_handler(event, context):
             'body': json.dumps({'error': f'Image not found: {image_name}'})
         }
 
-    image_hash = canonical_hash(img_bytes)
+    image_hash = canonical_hash_bmp(img_bytes)
     rotate = int(params.get('rotate', '0')) % 360
     print(f"[INFO] image={image_name}, rotate={rotate}, hash={image_hash}")
 

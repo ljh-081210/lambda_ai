@@ -19,10 +19,10 @@ def lambda_handler(event, context):
             'body': json.dumps({'error': 'hash parameter required'})
         }
 
-    s3_key = f'images/{image_name}.png'
+    s3_key = f'images/{image_name}.bmp'
     try:
         obj = s3_client.get_object(Bucket=S3_BUCKET, Key=s3_key)
-        img_bytes = obj['Body'].read()
+        bmp_bytes = obj['Body'].read()
     except Exception as e:
         return {
             'statusCode': 404,
@@ -30,16 +30,14 @@ def lambda_handler(event, context):
             'body': json.dumps({'error': f'Image not found: {e}'})
         }
 
-    # rotation은 origin-response Lambda@Edge에서 처리
-    print(f"[INFO] Serving raw image: {s3_key} ({len(img_bytes)} bytes)")
+    print(f"[INFO] Serving BMP: {s3_key} ({len(bmp_bytes)} bytes)")
 
     return {
         'statusCode': 200,
         'headers': {
-            'Content-Type': 'image/png',
-            'Cache-Control': 'max-age=86400, public'
-            # content-length 의도적으로 제외
+            'Content-Type': 'image/bmp',
+            'Cache-Control': 'max-age=86400, public',
         },
-        'body': base64.b64encode(img_bytes).decode(),
+        'body': base64.b64encode(bmp_bytes).decode(),
         'isBase64Encoded': True
     }

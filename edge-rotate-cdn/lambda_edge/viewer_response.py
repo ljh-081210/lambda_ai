@@ -45,7 +45,7 @@ def lambda_handler(event, context):
         print(f"[ERROR] S3 fetch failed: {e}")
         return response
 
-    img = Image.open(io.BytesIO(bmp_bytes))
+    img = Image.open(io.BytesIO(bmp_bytes)).convert('RGBA')
     if rotate in ROTATE_MAP:
         img = img.transpose(ROTATE_MAP[rotate])
 

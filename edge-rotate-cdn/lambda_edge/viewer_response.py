@@ -176,6 +176,8 @@ def lambda_handler(event, context):
         response['body'] = base64.b64encode(rotated_png).decode()
         response['bodyEncoding'] = 'base64'
         response['headers']['content-type'] = [{'key': 'Content-Type', 'value': 'image/png'}]
+        # 회전 후 크기가 달라지므로 Content-Length 제거 (브라우저 hang 방지)
+        response['headers'].pop('content-length', None)
         print(f"[INFO] Rotated {rotate}° ({w}x{h} → {new_w}x{new_h})")
 
     except Exception as e:

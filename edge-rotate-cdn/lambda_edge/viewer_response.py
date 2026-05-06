@@ -11,7 +11,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 S3_BUCKET = 'gj2026-cdn-bucket'
-s3 = boto3.client('s3', region_name='ap-northeast-2')
+s3 = boto3.client('s3', region_name='us-east-1')
 
 
 def decode_bmp(data):

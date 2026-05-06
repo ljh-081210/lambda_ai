@@ -4,7 +4,7 @@ import base64
 import boto3
 
 S3_BUCKET = os.environ.get('S3_BUCKET', 'gj2026-cdn-bucket')
-s3_client = boto3.client('s3', region_name='ap-northeast-2')
+s3_client = boto3.client('s3', region_name='us-east-1')
 
 
 def lambda_handler(event, context):

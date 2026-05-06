@@ -176,7 +176,6 @@ def lambda_handler(event, context):
         response['body'] = base64.b64encode(rotated_png).decode()
         response['bodyEncoding'] = 'base64'
         response['headers']['content-type'] = [{'key': 'Content-Type', 'value': 'image/png'}]
-        response['headers']['content-length'] = [{'key': 'Content-Length', 'value': str(len(rotated_png))}]
         print(f"[INFO] Rotated {rotate}° ({w}x{h} → {new_w}x{new_h}), size={len(rotated_png)} bytes")
 
     except Exception as e:

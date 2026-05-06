@@ -173,11 +173,10 @@ def lambda_handler(event, context):
     rotate = int(params.get('rotate', '0')) % 360
     print(f"[INFO] image={image_name}, rotate={rotate}, hash={image_hash}")
 
-    # 캐시 키: {hash}_{rotate} → 같은 이미지+각도 조합은 캐시 HIT
-    # viewer-request body limit = 40 KB → 이미지 직접 반환 불가
-    # origin Lambda(Pillow)에 위임
-    cache_key = f'{image_hash}_{rotate}'
+    # 캐시 키: {hash} 만 사용 (rotate 제외)
+    # → rotate=0 으로 캐시 워밍 후 rotate=90/180/270 모두 cache HIT
+    # → viewer-response 에서 rotate 파라미터로 회전 처리
     request['uri'] = '/image'
-    request['querystring'] = f'hash={cache_key}&image={image_name}&rotate={rotate}'
-    print(f"[INFO] Forwarding to origin: hash={cache_key}")
+    request['querystring'] = f'hash={image_hash}&image={image_name}&rotate={rotate}'
+    print(f"[INFO] Forwarding to origin: hash={image_hash}, rotate={rotate}")
     return request

@@ -30,7 +30,8 @@ def lambda_handler(event, context):
             'body': json.dumps({'error': f'Image not found: {e}'})
         }
 
-    # rotation은 origin-response Lambda@Edge에서 처리
+    # rotation은 viewer-response Lambda@Edge에서 처리
+    # content-length를 명시하지 않아 viewer-response에서 설정 가능하도록 시도
     print(f"[INFO] Serving raw image: {s3_key} ({len(img_bytes)} bytes)")
 
     return {
@@ -38,6 +39,7 @@ def lambda_handler(event, context):
         'headers': {
             'Content-Type': 'image/png',
             'Cache-Control': 'max-age=86400, public'
+            # content-length 의도적으로 제외
         },
         'body': base64.b64encode(img_bytes).decode(),
         'isBase64Encoded': True

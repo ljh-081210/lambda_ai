@@ -8,7 +8,6 @@ s3 = boto3.client('s3', region_name='us-east-1')
 
 
 def decode_bmp_rgba(data):
-    """24/32-bit BMP → (width, height, [(r,g,b,a), ...] top-to-bottom)"""
     pixel_offset = struct.unpack_from('<I', data, 10)[0]
     width = struct.unpack_from('<i', data, 18)[0]
     height = struct.unpack_from('<i', data, 22)[0]
@@ -33,7 +32,6 @@ def decode_bmp_rgba(data):
 
 
 def encode_bmp_rgba(pixels, width, height):
-    """RGBA → 32-bit BMP, size = 54 + W*H*4 (rotation-invariant)"""
     pixel_data_size = width * height * 4
     file_size = 54 + pixel_data_size
     file_header = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
@@ -79,7 +77,13 @@ def lambda_handler(event, context):
     params = parse_qs(request.get('querystring', ''))
     rotate = int(params.get('rotate', '0')) % 360
     image_name = params.get('image', '')
+
+    # 현재 response 상태 로깅
     print(f"[INFO] image={image_name}, rotate={rotate}")
+    print(f"[INFO] response status={response['status']}")
+    print(f"[INFO] response header keys={list(response['headers'].keys())}")
+    for k, v in response['headers'].items():
+        print(f"[INFO]   {k}: {v}")
 
     if rotate == 0:
         return response
@@ -92,19 +96,15 @@ def lambda_handler(event, context):
         print(f"[ERROR] S3 fetch failed: {e}")
         return response
 
-    import copy
     w, h, pixels = decode_bmp_rgba(bmp_bytes)
     rotated, new_w, new_h = rotate_pixels(pixels, w, h, rotate)
     rotated_bmp = encode_bmp_rgba(rotated, new_w, new_h)
     print(f"[INFO] Rotated {rotate}° ({w}x{h}→{new_w}x{new_h}), size={len(rotated_bmp)}")
 
-    new_headers = copy.deepcopy(response['headers'])
-    new_headers['content-length'] = [{'key': 'Content-Length', 'value': str(len(rotated_bmp))}]
-
     return {
         'status': response['status'],
         'statusDescription': response.get('statusDescription', 'OK'),
-        'headers': new_headers,
+        'headers': response['headers'],
         'body': base64.b64encode(rotated_bmp).decode(),
         'bodyEncoding': 'base64',
     }

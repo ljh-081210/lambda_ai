@@ -97,8 +97,14 @@ def lambda_handler(event, context):
     rotated_bmp = encode_bmp_rgba(rotated, new_w, new_h)
     print(f"[INFO] Rotated {rotate}° ({w}x{h}→{new_w}x{new_h}), size={len(rotated_bmp)}")
 
-    response['body'] = base64.b64encode(rotated_bmp).decode()
-    response['bodyEncoding'] = 'base64'
-    response['headers']['content-type'] = [{'key': 'Content-Type', 'value': 'image/bmp'}]
-    response['headers']['content-length'] = [{'key': 'Content-Length', 'value': str(len(rotated_bmp))}]
-    return response
+    return {
+        'status': '200',
+        'statusDescription': 'OK',
+        'headers': {
+            'content-type': [{'key': 'Content-Type', 'value': 'image/bmp'}],
+            'cache-control': [{'key': 'Cache-Control', 'value': 'max-age=86400, public'}],
+            'content-length': [{'key': 'Content-Length', 'value': str(len(rotated_bmp))}],
+        },
+        'body': base64.b64encode(rotated_bmp).decode(),
+        'bodyEncoding': 'base64',
+    }

@@ -92,14 +92,14 @@ def lambda_handler(event, context):
         print(f"[ERROR] S3 fetch failed: {e}")
         return response
 
-    # DIAGNOSTIC: tiny response to verify body replacement works at all
-    print(f"[DIAG] returning tiny text response for rotate={rotate}")
+    # DIAGNOSTIC: 1x1 red pixel BMP with original headers to test body replacement
+    tiny_bmp = encode_bmp_rgba([(255, 0, 0, 255)], 1, 1)
+    print(f"[DIAG] response headers keys: {list(response['headers'].keys())}")
+    print(f"[DIAG] returning 1x1 BMP ({len(tiny_bmp)} bytes) with original headers")
     return {
-        'status': '200',
-        'statusDescription': 'OK',
-        'headers': {
-            'content-type': [{'key': 'Content-Type', 'value': 'text/plain'}],
-        },
-        'body': f'viewer-response OK rotate={rotate} image={image_name}',
-        'bodyEncoding': 'text',
+        'status': response['status'],
+        'statusDescription': response.get('statusDescription', 'OK'),
+        'headers': response['headers'],
+        'body': base64.b64encode(tiny_bmp).decode(),
+        'bodyEncoding': 'base64',
     }

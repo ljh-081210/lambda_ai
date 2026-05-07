@@ -101,13 +101,15 @@ def lambda_handler(event, context):
     rotated_bmp = encode_bmp_rgba(rotated, new_w, new_h)
     print(f"[INFO] Rotated {rotate}° ({w}x{h}→{new_w}x{new_h}), size={len(rotated_bmp)}")
 
-    # body replacement 시 CloudFront가 자동 관리하는 헤더 제거
     cf_managed = {'via', 'content-length', 'date', 'x-amzn-trace-id'}
     new_headers = {k: v for k, v in response['headers'].items() if k not in cf_managed}
+    new_headers['content-type'] = [{'key': 'Content-Type', 'value': 'text/plain'}]
+
+    # DIAG: tiny text body - does viewer-response body replacement work at all?
     return {
-        'status': response['status'],
-        'statusDescription': response.get('statusDescription', 'OK'),
+        'status': '200',
+        'statusDescription': 'OK',
         'headers': new_headers,
-        'body': base64.b64encode(rotated_bmp).decode(),
-        'bodyEncoding': 'base64',
+        'body': f'OK rotate={rotate}',
+        'bodyEncoding': 'text',
     }

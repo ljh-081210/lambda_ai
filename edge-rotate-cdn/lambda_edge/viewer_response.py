@@ -101,7 +101,8 @@ def lambda_handler(event, context):
     rotated_bmp = encode_bmp_rgba(rotated, new_w, new_h)
     print(f"[INFO] Rotated {rotate}° ({w}x{h}→{new_w}x{new_h}), size={len(rotated_bmp)}")
 
-    # 원본 response object에 body만 추가 (headers 건드리지 않음)
+    # content-length만 제거 (body replacement 시 CloudFront가 자동 계산)
+    response['headers'].pop('content-length', None)
     response['body'] = base64.b64encode(rotated_bmp).decode()
     response['bodyEncoding'] = 'base64'
     return response

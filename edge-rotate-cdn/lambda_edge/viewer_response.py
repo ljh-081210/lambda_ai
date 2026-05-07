@@ -1,46 +1,102 @@
 import base64
 import struct
+import zlib
 import boto3
 from botocore.exceptions import ClientError
 
 S3_BUCKET = 'gj2026-cdn-bucket'
-s3 = boto3.client('s3', region_name='us-east-1')
+s3 = boto3.client('s3', region_name='ap-northeast-2')
 
 
-def decode_bmp_rgba(data):
-    pixel_offset = struct.unpack_from('<I', data, 10)[0]
-    width = struct.unpack_from('<i', data, 18)[0]
-    height = struct.unpack_from('<i', data, 22)[0]
-    bpp = struct.unpack_from('<H', data, 28)[0]
-    ch = bpp // 8
-    row_stride = (width * ch + 3) & ~3
-    bottom_up = height > 0
-    abs_height = abs(height)
+def decode_png_rgb(data):
+    if data[:8] != b'\x89PNG\r\n\x1a\n':
+        raise ValueError("Not a PNG")
+
+    pos, width, height, color_type, idat = 8, 0, 0, 0, b''
+    while pos < len(data):
+        length = struct.unpack('>I', data[pos:pos + 4])[0]
+        tag = data[pos + 4:pos + 8]
+        chunk = data[pos + 8:pos + 8 + length]
+        pos += 12 + length
+        if tag == b'IHDR':
+            width, height = struct.unpack('>II', chunk[:8])
+            color_type = chunk[9]
+        elif tag == b'IDAT':
+            idat += chunk
+        elif tag == b'IEND':
+            break
+
+    d = zlib.decompressobj()
+    try:
+        raw = d.decompress(idat) + d.flush()
+    except zlib.error:
+        raw = d.decompress(idat)
+
+    ch = {0: 1, 2: 3, 4: 2, 6: 4}.get(color_type, 3)
+    stride = width * ch
+    prev = bytearray(stride)
     pixels = []
-    for y in range(abs_height):
-        row_start = pixel_offset + y * row_stride
+    actual_rows = len(raw) // (stride + 1)
+
+    for y in range(min(height, actual_rows)):
+        off = y * (stride + 1)
+        ft = raw[off]
+        row = bytearray(raw[off + 1:off + 1 + stride])
+        if ft == 1:
+            for x in range(ch, stride):
+                row[x] = (row[x] + row[x - ch]) & 0xFF
+        elif ft == 2:
+            for x in range(stride):
+                row[x] = (row[x] + prev[x]) & 0xFF
+        elif ft == 3:
+            for x in range(stride):
+                a = row[x - ch] if x >= ch else 0
+                row[x] = (row[x] + (a + prev[x]) // 2) & 0xFF
+        elif ft == 4:
+            for x in range(stride):
+                a = row[x - ch] if x >= ch else 0
+                b, c = prev[x], (prev[x - ch] if x >= ch else 0)
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                p = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+                row[x] = (row[x] + p) & 0xFF
+        prev = row
+
         for x in range(width):
-            off = row_start + x * ch
-            b, g, r = data[off], data[off+1], data[off+2]
-            a = data[off+3] if ch == 4 else 255
-            pixels.append((r, g, b, a))
-    if bottom_up:
-        rows = [pixels[y*width:(y+1)*width] for y in range(abs_height)]
-        rows.reverse()
-        pixels = [p for row in rows for p in row]
-    return width, abs_height, pixels
+            if color_type == 0:
+                g = row[x]
+                pixels.append((g, g, g))
+            elif color_type == 2:
+                pixels.append((row[x*3], row[x*3+1], row[x*3+2]))
+            elif color_type == 4:
+                pixels.append((row[x*2], row[x*2], row[x*2]))
+            elif color_type == 6:
+                pixels.append((row[x*4], row[x*4+1], row[x*4+2]))
+            else:
+                pixels.append((row[x*ch], row[x*ch], row[x*ch]))
+
+    return width, actual_rows, pixels
 
 
-def encode_bmp_rgba(pixels, width, height):
-    pixel_data_size = width * height * 4
-    file_size = 54 + pixel_data_size
-    file_header = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
-    info_header = struct.pack('<IiiHHIIiiII',
-        40, width, -height, 1, 32, 0, pixel_data_size, 0, 0, 0, 0)
-    pixel_bytes = bytearray()
-    for r, g, b, a in pixels:
-        pixel_bytes.extend([b, g, r, a])
-    return file_header + info_header + bytes(pixel_bytes)
+def encode_png_rgb(pixels, width, height):
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)
+        for x in range(width):
+            r, g, b = pixels[y * width + x]
+            raw.extend([r, g, b])
+
+    compressed = zlib.compress(bytes(raw), 6)
+
+    def make_chunk(tag, data):
+        crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+        return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', crc)
+
+    ihdr = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
+
+    return (b'\x89PNG\r\n\x1a\n' +
+            make_chunk(b'IHDR', ihdr) +
+            make_chunk(b'IDAT', compressed) +
+            make_chunk(b'IEND', b''))
 
 
 def rotate_pixels(pixels, w, h, degrees):
@@ -49,13 +105,15 @@ def rotate_pixels(pixels, w, h, degrees):
         return pixels, w, h
     elif degrees == 90:
         new_w, new_h = h, w
-        new = [pixels[(h-1-nx)*w+ny] for ny in range(new_h) for nx in range(new_w)]
+        new = [pixels[(h - 1 - nx) * w + ny]
+               for ny in range(new_h) for nx in range(new_w)]
         return new, new_w, new_h
     elif degrees == 180:
         return list(reversed(pixels)), w, h
     elif degrees == 270:
         new_w, new_h = h, w
-        new = [pixels[nx*w+(w-1-ny)] for ny in range(new_h) for nx in range(new_w)]
+        new = [pixels[nx * w + (w - 1 - ny)]
+               for ny in range(new_h) for nx in range(new_w)]
         return new, new_w, new_h
     return pixels, w, h
 
@@ -76,39 +134,14 @@ def lambda_handler(event, context):
 
     params = parse_qs(request.get('querystring', ''))
     rotate = int(params.get('rotate', '0')) % 360
-    image_name = params.get('image', '')
-
-    # 현재 response 상태 로깅
-    print(f"[INFO] image={image_name}, rotate={rotate}")
-    print(f"[INFO] response status={response['status']}")
-    print(f"[INFO] response header keys={list(response['headers'].keys())}")
-    for k, v in response['headers'].items():
-        print(f"[INFO]   {k}: {v}")
 
     if rotate == 0:
-        # DIAG: tiny 1x1 BMP (58 bytes), content-length 제거해서 sizes 맞춤
-        tiny_bmp = encode_bmp_rgba([(255, 0, 0, 255)], 1, 1)
-        response['headers'].pop('content-length', None)
-        response['body'] = base64.b64encode(tiny_bmp).decode()
-        response['bodyEncoding'] = 'base64'
-        print(f"[DIAG] tiny BMP body size: {len(tiny_bmp)} bytes, base64 len: {len(response['body'])}")
         return response
 
-    s3_key = f'images/{image_name}.bmp'
-    try:
-        obj = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
-        bmp_bytes = obj['Body'].read()
-    except ClientError as e:
-        print(f"[ERROR] S3 fetch failed: {e}")
-        return response
+    # 테스트: body 교체 작동 확인 (content-length 건드리지 않음)
+    test_body = f'rotate={rotate} works!'
+    response['body'] = test_body
+    response['bodyEncoding'] = 'text'
+    response['headers']['content-type'] = [{'key': 'Content-Type', 'value': 'text/plain'}]
 
-    w, h, pixels = decode_bmp_rgba(bmp_bytes)
-    rotated, new_w, new_h = rotate_pixels(pixels, w, h, rotate)
-    rotated_bmp = encode_bmp_rgba(rotated, new_w, new_h)
-    print(f"[INFO] Rotated {rotate}° ({w}x{h}→{new_w}x{new_h}), size={len(rotated_bmp)}")
-
-    # content-length만 제거 (body replacement 시 CloudFront가 자동 계산)
-    response['headers'].pop('content-length', None)
-    response['body'] = base64.b64encode(rotated_bmp).decode()
-    response['bodyEncoding'] = 'base64'
     return response

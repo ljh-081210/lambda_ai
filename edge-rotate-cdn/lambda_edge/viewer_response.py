@@ -92,19 +92,14 @@ def lambda_handler(event, context):
         print(f"[ERROR] S3 fetch failed: {e}")
         return response
 
-    w, h, pixels = decode_bmp_rgba(bmp_bytes)
-    rotated, new_w, new_h = rotate_pixels(pixels, w, h, rotate)
-    rotated_bmp = encode_bmp_rgba(rotated, new_w, new_h)
-    print(f"[INFO] Rotated {rotate}° ({w}x{h}→{new_w}x{new_h}), size={len(rotated_bmp)}")
-
+    # DIAGNOSTIC: tiny response to verify body replacement works at all
+    print(f"[DIAG] returning tiny text response for rotate={rotate}")
     return {
         'status': '200',
         'statusDescription': 'OK',
         'headers': {
-            'content-type': [{'key': 'Content-Type', 'value': 'image/bmp'}],
-            'cache-control': [{'key': 'Cache-Control', 'value': 'max-age=86400, public'}],
-            'content-length': [{'key': 'Content-Length', 'value': str(len(rotated_bmp))}],
+            'content-type': [{'key': 'Content-Type', 'value': 'text/plain'}],
         },
-        'body': base64.b64encode(rotated_bmp).decode(),
-        'bodyEncoding': 'base64',
+        'body': f'viewer-response OK rotate={rotate} image={image_name}',
+        'bodyEncoding': 'text',
     }

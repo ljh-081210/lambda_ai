@@ -101,10 +101,12 @@ def lambda_handler(event, context):
     rotated_bmp = encode_bmp_rgba(rotated, new_w, new_h)
     print(f"[INFO] Rotated {rotate}° ({w}x{h}→{new_w}x{new_h}), size={len(rotated_bmp)}")
 
+    # via는 CloudFront가 직접 관리하는 read-only 헤더 → body replacement 시 제거해야 함
+    new_headers = {k: v for k, v in response['headers'].items() if k != 'via'}
     return {
         'status': response['status'],
         'statusDescription': response.get('statusDescription', 'OK'),
-        'headers': response['headers'],
+        'headers': new_headers,
         'body': base64.b64encode(rotated_bmp).decode(),
         'bodyEncoding': 'base64',
     }

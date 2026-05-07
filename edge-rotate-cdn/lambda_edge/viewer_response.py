@@ -86,8 +86,12 @@ def lambda_handler(event, context):
         print(f"[INFO]   {k}: {v}")
 
     if rotate == 0:
-        response['body'] = 'hello from viewer-response'
-        response['bodyEncoding'] = 'text'
+        # DIAG: tiny 1x1 BMP (58 bytes), content-length 제거해서 sizes 맞춤
+        tiny_bmp = encode_bmp_rgba([(255, 0, 0, 255)], 1, 1)
+        response['headers'].pop('content-length', None)
+        response['body'] = base64.b64encode(tiny_bmp).decode()
+        response['bodyEncoding'] = 'base64'
+        print(f"[DIAG] tiny BMP body size: {len(tiny_bmp)} bytes, base64 len: {len(response['body'])}")
         return response
 
     s3_key = f'images/{image_name}.bmp'

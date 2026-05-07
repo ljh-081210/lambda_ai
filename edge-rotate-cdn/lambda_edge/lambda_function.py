@@ -189,7 +189,7 @@ def lambda_handler(event, context):
     if not image_name:
         return request
 
-    s3_key = f'images/{image_name}.bmp'
+    s3_key = f'images/{image_name}.png'
     try:
         obj = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
         img_bytes = obj['Body'].read()
@@ -205,7 +205,7 @@ def lambda_handler(event, context):
             'body': json.dumps({'error': f'Image not found: {image_name}'})
         }
 
-    image_hash = canonical_hash_bmp(img_bytes)
+    image_hash = canonical_hash(img_bytes)
     rotate = int(params.get('rotate', '0')) % 360
     print(f"[INFO] image={image_name}, rotate={rotate}, hash={image_hash}")
 

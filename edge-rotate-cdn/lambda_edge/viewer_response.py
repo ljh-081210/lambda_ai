@@ -92,14 +92,19 @@ def lambda_handler(event, context):
         print(f"[ERROR] S3 fetch failed: {e}")
         return response
 
-    # DIAGNOSTIC: 1x1 red pixel BMP with original headers to test body replacement
-    tiny_bmp = encode_bmp_rgba([(255, 0, 0, 255)], 1, 1)
-    print(f"[DIAG] response headers keys: {list(response['headers'].keys())}")
-    print(f"[DIAG] returning 1x1 BMP ({len(tiny_bmp)} bytes) with original headers")
+    import copy
+    w, h, pixels = decode_bmp_rgba(bmp_bytes)
+    rotated, new_w, new_h = rotate_pixels(pixels, w, h, rotate)
+    rotated_bmp = encode_bmp_rgba(rotated, new_w, new_h)
+    print(f"[INFO] Rotated {rotate}° ({w}x{h}→{new_w}x{new_h}), size={len(rotated_bmp)}")
+
+    new_headers = copy.deepcopy(response['headers'])
+    new_headers['content-length'] = [{'key': 'Content-Length', 'value': str(len(rotated_bmp))}]
+
     return {
         'status': response['status'],
         'statusDescription': response.get('statusDescription', 'OK'),
-        'headers': response['headers'],
-        'body': base64.b64encode(tiny_bmp).decode(),
+        'headers': new_headers,
+        'body': base64.b64encode(rotated_bmp).decode(),
         'bodyEncoding': 'base64',
     }

@@ -86,6 +86,8 @@ def lambda_handler(event, context):
         print(f"[INFO]   {k}: {v}")
 
     if rotate == 0:
+        response['body'] = 'hello from viewer-response'
+        response['bodyEncoding'] = 'text'
         return response
 
     s3_key = f'images/{image_name}.bmp'

@@ -9,14 +9,13 @@ s3_client = boto3.client('s3', region_name='us-east-1')
 
 def lambda_handler(event, context):
     params = event.get('queryStringParameters') or {}
-    image_hash = params.get('hash')
     image_name = params.get('image', '')
 
-    if not image_hash:
+    if not image_name:
         return {
             'statusCode': 400,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({'error': 'hash parameter required'})
+            'body': json.dumps({'error': 'image parameter required'})
         }
 
     s3_key = f'images/{image_name}.png'

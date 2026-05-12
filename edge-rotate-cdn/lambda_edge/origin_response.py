@@ -156,7 +156,5 @@ def lambda_handler(event, context):
     response['body'] = base64.b64encode(rotated_png).decode()
     response['bodyEncoding'] = 'base64'
     response['headers']['content-type'] = [{'key': 'Content-Type', 'value': 'image/png'}]
-    response['headers']['content-length'] = [
-        {'key': 'Content-Length', 'value': str(len(rotated_png))}
-    ]
+    response['headers'].pop('content-length', None)
     return response

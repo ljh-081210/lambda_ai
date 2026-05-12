@@ -29,5 +29,6 @@ def lambda_handler(event, context):
         return request
 
     rotate = int(params.get('rotate', '0')) % 360
+    request['uri'] = '/image'
     request['querystring'] = f'image={image_name}&rotate={rotate}'
     return request
